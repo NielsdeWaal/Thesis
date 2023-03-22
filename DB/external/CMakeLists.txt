@@ -134,6 +134,12 @@ FetchContent_Declare(
   GIT_REPOSITORY git@github.com:NielsdeWaal/TimeTree.git
   GIT_TAG origin/master
 )
+FetchContent_Declare(
+    fmt
+
+    GIT_REPOSITORY git@github.com:fmtlib/fmt.git
+    GIT_TAG 9.1.0
+)
 
 FetchContent_MakeAvailable(CommonLibs TimeTree)
 # set_target_properties(EventLoop PROPERTIES IMPORTED_LOCATION k)
