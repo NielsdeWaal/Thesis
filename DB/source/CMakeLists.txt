@@ -4,7 +4,8 @@ add_compile_options(-std=c++20 -Wall -Wextra -Wshadow -Wnon-virtual-dtor -Wunuse
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
 add_executable(FrogFish
-  main.cpp)
+  main.cpp
+  FileManager.hpp)
 
 # target_include_directories(FrogFish PUBLIC c)
 target_link_libraries(FrogFish 
