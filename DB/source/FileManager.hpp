@@ -16,6 +16,11 @@
 // This eases the problem of possibly overwriting data while the data is being written 
 // to disk, however this does come at the expense of memory consumption
 
+
+// A third option would be an async queue structure.
+// When a buffer is requested this queue returns an awaitable which is completed
+// when a buffer is either directly available, or when one is released by another thread
+
 enum class FileStatus : std::uint8_t {
   NO_FREE_FILE = 0,
   SUCCEEDED,

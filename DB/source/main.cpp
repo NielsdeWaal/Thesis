@@ -7,21 +7,21 @@
 #include <string>
 #include <string_view>
 
+#include <fmt/core.h>
+
 #include <EventLoop.h>
 #include <File.h>
 #include <src/TimeTree.hpp>
+
+#include "FileManager.hpp"
 
 class Storage {
 public:
   virtual ~Storage() = 0;
   virtual void InsertDataBlock(EventLoop::DmaBuffer) = 0;
   virtual EventLoop::DmaBuffer ReadDataBlock(std::uint64_t addr) = 0;
-  virtual void InsertLogStatement(std::uint64_t start, std::uint64_t end, std::uint64_t pos) = 0;
-};
-
-class FileManager {
-public:
-  FileManager() = default;
+  virtual void InsertLogStatement(std::uint64_t start, std::uint64_t end,
+                                  std::uint64_t pos) = 0;
 };
 
 class Handler //: public Common::IStreamSocketServerHandler
@@ -29,10 +29,11 @@ class Handler //: public Common::IStreamSocketServerHandler
 {
 public:
   explicit Handler(EventLoop::EventLoop &ev)
-      : mEv(ev), mLogFile(mEv), mNodeFile(mEv),
-        mTestFile(mEv) // , mSocket(mEv, this)
+      : mEv(ev), mLogFile(mEv), mNodeFile(mEv), mTestFile(mEv),
+        mFileManager(mEv) // , mSocket(mEv, this)
   {
     mLogger = mEv.RegisterLogger("FrogFishDB");
+    // mFiles.reserve(4);
     func();
   }
 
@@ -56,87 +57,132 @@ public:
     // int a = co_await mFile.OpenAt("/tmp/eventloop_file");
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
+    co_await mFileManager.SetDataFiles(4);
+    // std::size_t count = 4;
+    // for(std::size_t i = 0; i < count; ++i) {
+    //   mLogger->info("Opening file nodes{}.dat", i);
+    //   mFiles.emplace_back(mEv);
+    //   co_await mFiles[i].OpenAt(fmt::format("nodes{}.dat", i));
+    // }
 
     // TODO create this file manually and fill with test data
     // co_await mTestFile.OpenAt("./test");
-    auto data = LoadDataFile("./large");
+    auto data = LoadDataFile("../medium-plus-1");
     // for(const auto& dp : data) {
     //   mLogger->info("{} - {}", dp.timestamp, dp.value);
     // }
 
-    constexpr std::size_t bufSize{4096};
     std::size_t fileOffset{0};
     std::size_t logOffset{0};
     EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
     EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
-    
-    constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
+
     std::size_t ctr{0};
     std::array<DataPoint, memtableSize> memtable{};
-    // std::array<DataPoint,memtableSize>& memtable = reinterpret_cast<std::array<DataPoint, memtableSize>&>((DataPoint*)buf.GetPtr());
-    // DataPoint* memtable = (DataPoint*)buf.GetPtr();
+    // DataPointt* memtable = (DataPoint*)buf.GetPtr();
+    // std::array<DataPoint,memtableSize>& memtable =
+    // reinterpret_cast<std::array<DataPoint,
+    // memtableSize>&>((DataPoint*)buf.GetPtr()); DataPoint* memtable =
+    // (DataPoint*)buf.GetPtr();
     auto start = Common::MONOTONIC_CLOCK::Now();
 
-    for(const auto& dp : data) {
+    for (const auto &dp : data) {
+      if (!mTrees.contains(dp.series)) {
+        mLogger->info("New series {}, creaing trees", dp.series);
+        mTrees[dp.series] = MetricTree{.ctr = 0};
+      }
+      auto& tree = mTrees[dp.series];
       // memtable.at(ctr) = dp;
-      memtable[ctr] = dp;
-      ++ctr;
-      if(ctr == memtableSize) {
-        mLogger->info("Flushing memtable ({} - {})", memtable.front().timestamp, memtable.back().timestamp);
-        // mLogger->info("Flushing memtable ({} - {})", memtable[0].timestamp, memtable[memtableSize].timestamp);
-        std::memcpy(buf.GetPtr(), memtable.data(), bufSize);
-        co_await mNodeFile.Append(buf);
-        mTree.Insert(memtable.front().timestamp, memtable.back().timestamp, fileOffset);
+      // memtable[ctr] = dp;
+      tree.memtable[tree.ctr] = DataPoint{.timestamp = dp.timestamp, .value = dp.value};
+      // ++ctr;
+      tree.ctr += 1;
+      if (tree.ctr == memtableSize) {
+        mLogger->info("Flushing memtable for {} ({} - {})", dp.series, tree.memtable.front().timestamp,
+                      tree.memtable.back().timestamp);
+        // mLogger->info("Flushing memtable ({} - {})", memtable[0].timestamp,
+        // memtable[memtableSize].timestamp);
+        // std::memcpy(buf.GetPtr(), memtable.data(), bufSize);
+        // co_await mNodeFile.Append(buf);
 
-        LogPoint* log = (LogPoint*)logBuf.GetPtr();
-        log->start = memtable.front().timestamp;
-        log->end= memtable.back().timestamp;
+        EventLoop::DmaBuffer flushBuf = mEv.AllocateDmaBuffer(bufSize);
+        std::memcpy(flushBuf.GetPtr(), tree.memtable.data(), bufSize);
+        co_await mNodeFile.Append(flushBuf);
+
+        // flushBuf.Free();
+
+        // auto res = co_await mFileManager.InsertWrite(buf);
+        // while (res != FileStatus::SUCCEEDED) {
+        //   res = co_await mFileManager.InsertWrite(buf);
+        // }
+        // mTree.Insert(memtable.front().timestamp, memtable.back().timestamp,
+        //              fileOffset);
+        tree.tree.Insert(tree.memtable.front().timestamp, tree.memtable.back().timestamp, fileOffset);
+
+        LogPoint *log = (LogPoint *)logBuf.GetPtr();
+        log->start = tree.memtable.front().timestamp;
+        log->end = tree.memtable.back().timestamp;
         log->offset = fileOffset;
         co_await mLogFile.WriteAt(logBuf, logOffset);
 
-        // mTree.Insert(memtable[0].timestamp, memtable[memtableSize].timestamp, fileOffset);
+        // mTree.Insert(memtable[0].timestamp, memtable[memtableSize].timestamp,
+        // fileOffset);
         ctr = 0;
         fileOffset += bufSize;
         logOffset += 512;
       }
     }
 
-    if(ctr != 0) {
-      mLogger->info("Flushing remaining (entries: {}) memtable ({} - {})", ctr, memtable.front().timestamp, memtable.at(ctr).timestamp);
-      // mLogger->info("Flushing remaining (entries: {}) memtable ({} - {})", ctr, memtable[0].timestamp, memtable[ctr].timestamp);
-      std::memcpy(buf.GetPtr(), memtable.data(), ctr);
-      co_await mNodeFile.Append(buf);
-      mTree.Insert(memtable.front().timestamp, memtable.back().timestamp, fileOffset);
+    // TODO flush non empty memtables
+    // if (ctr != 0) {
+    //   mLogger->info("Flushing remaining (entries: {}) memtable ({} - {})", ctr,
+    //                 memtable.front().timestamp, memtable.at(ctr).timestamp);
+    //   // mLogger->info("Flushing remaining (entries: {}) memtable ({} - {})",
+    //   // ctr, memtable[0].timestamp, memtable[ctr].timestamp);
+    //   std::memcpy(buf.GetPtr(), memtable.data(), ctr);
+    //   co_await mNodeFile.Append(buf);
+    //   // auto res = co_await mFileManager.InsertWrite(buf);
+    //   // while (res != FileStatus::SUCCEEDED) {
+    //   //   res = co_await mFileManager.InsertWrite(buf);
+    //   // }
+    //   mTree.Insert(memtable.front().timestamp, memtable.back().timestamp,
+    //                fileOffset);
 
-      LogPoint* log = (LogPoint*)logBuf.GetPtr();
-      log->start = memtable.front().timestamp;
-      log->end= memtable.at(ctr).timestamp;
-      log->offset = fileOffset;
-      co_await mLogFile.WriteAt(logBuf, logOffset);
+    //   LogPoint *log = (LogPoint *)logBuf.GetPtr();
+    //   log->start = memtable.front().timestamp;
+    //   log->end = memtable.at(ctr).timestamp;
+    //   log->offset = fileOffset;
+    //   co_await mLogFile.WriteAt(logBuf, logOffset);
 
-      // mTree.Insert(memtable[0].timestamp, memtable[ctr].timestamp, fileOffset);
-      ctr = 0;
-      fileOffset += bufSize;
-      logOffset += 512;
-    }
+    //   // mTree.Insert(memtable[0].timestamp, memtable[ctr].timestamp,
+    //   // fileOffset);
+    //   ctr = 0;
+    //   fileOffset += bufSize;
+    //   logOffset += 512;
+    // }
 
     auto end = Common::MONOTONIC_CLOCK::Now();
-    auto duration = Common::MONOTONIC_CLOCK::ToNanos(end - start) / 100 / 100 / 100;
+    auto duration =
+        Common::MONOTONIC_CLOCK::ToNanos(end - start) / 100 / 100 / 100;
 
     mLogger->info("Using memtable of size {}", memtableSize);
-    
-    mLogger->info("Ingestion took, {}ms, {} points, {} points/s", duration, data.size(), //(
-      (data.size() / duration) * 1000 //) * 100 /// (duration / 100)
-      );
+
+    mLogger->info("Ingestion took, {}ms, {} points, {} points/s", duration,
+                  data.size(),                    //(
+                  (data.size() / duration) * 1000 //) * 100 /// (duration / 100)
+    );
 
     buf.Free();
 
-
-    mLogger->info("Tree is height: {}", mTree.GetHeight());
-    for(TimeTreeNode<64>& node : mTree) {
-      mLogger->info("{} -> {} (links: {})", node.GetNodeStart(), node.GetNodeEnd(), node.GetChildCount());
+    for (auto &[name, metric] : mTrees) {
+      auto tree = metric.tree; 
+      mLogger->info("Tree is height: {}", tree.GetHeight());
+      for (TimeTreeNode<64> &node : tree) {
+        mLogger->info("{} -> {} (links: {})", node.GetNodeStart(),
+                      node.GetNodeEnd(), node.GetChildCount());
+      }
     }
-    
+
     // EventLoop::DmaBuffer testBuf = mEv.AllocateDmaBuffer(4096);
     // EventLoop::DmaBuffer testBuf{4096};
     // int ret = co_await mFile.Append(testBuf);
@@ -177,17 +223,34 @@ private:
     std::uint64_t end;
     std::uint64_t offset;
   };
-  std::vector<DataPoint> LoadDataFile(const std::string &filename) {
-    std::vector<DataPoint> resVec;
+
+  static constexpr std::size_t bufSize{4096};
+  static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
+  
+  struct MetricTree {
+    TimeTree<64> tree;
+    std::size_t ctr;
+    std::array<DataPoint, memtableSize> memtable{};
+  };
+  
+  struct IngestionPoint {
+    std::string series;
+    std::uint64_t timestamp;
+    std::uint64_t value;
+  };
+  std::vector<IngestionPoint> LoadDataFile(const std::string &filename) {
+    std::vector<IngestionPoint> resVec;
     resVec.reserve(10000);
     std::ifstream input(filename);
     for (std::string line; std::getline(input, line);) {
       // mLogger->info("{}", line);
       // auto vec = split_at_any(line, " ");
       // for (const auto str : vec) {
-      DataPoint dp{};
+      IngestionPoint dp{};
       TokenGen tg{line, " "};
-      tg();
+      // tg();
+      // mLogger->info("{}", tg());
+      std::string name{tg()};
       TokenGen values{tg(), ","};
       TokenGen point{values(), "="};
       point();
@@ -207,12 +270,13 @@ private:
       auto tsString = tg();
       auto res = std::from_chars(tsString.data(),
                                  tsString.data() + tsString.size(), ts);
-      // if(res.ec == std::errc::invalid_argument) {
-      //   assert(false);
-      // }
+      if (res.ec == std::errc::invalid_argument) {
+        assert(false);
+      }
+      dp.series = std::move(name);
       dp.timestamp = ts;
       resVec.push_back(dp);
-      // mLogger->info("{} - {}", dp.timestamp, dp.value);
+      // mLogger->info("{} -> {} - {}", dp.series, dp.timestamp, dp.value);
     }
     return resVec;
   }
@@ -235,12 +299,15 @@ private:
   EventLoop::EventLoop &mEv;
   DmaFile mLogFile;
   AppendOnlyFile mNodeFile;
+  FileManager mFileManager;
   std::shared_ptr<spdlog::logger> mLogger;
   // Common::StreamSocketServer mSocket;
 
   DmaFile mTestFile;
+  // std::vector<AppendOnlyFile> mFiles;
 
-  TimeTree<64> mTree;
+  // TimeTree<64> mTree;
+  std::unordered_map<std::string, MetricTree> mTrees;
 };
 
 int main() {
