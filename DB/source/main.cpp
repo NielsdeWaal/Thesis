@@ -35,7 +35,83 @@ public:
   {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     // mFiles.reserve(4);
-    func();
+    // func();
+    // Writer();
+    IngestionTask();
+  }
+
+  void Configure() {
+    // TODO fix these settings
+    auto config = mEv.GetConfigTable("DB");
+    mIngestionMethod = config->get_as<int>("IngestionMethod").value_or(-1);
+  }
+
+  EventLoop::uio::task<> IngestionTask() {
+    // co_await mFileManager.SetDataFiles(4);
+    co_await mLogFile.OpenAt("./log.dat");
+    co_await mNodeFile.OpenAt("./nodes.dat");
+    
+    // std::ifstream input("../medium-plus-1");
+    std::ifstream input("../large-5");
+    InfluxParser parser;
+
+    InfluxMessage measurement;
+    for (std::string line; std::getline(input, line);) {
+      parser.Parse(line, measurement);
+      // mLogger->info("Wire: {} -> {} - {}", measurement.timestamp,
+      //               fmt::join(measurement.tags, ", "),
+      //               fmt::join(measurement.values, ", "));
+      // mLogger->info("Wire: {} -> {}", measurement.timestamp,
+      // fmt::join(measurement.measurments, ", "));
+      co_await Writer(measurement);
+      measurement.measurments.clear();
+      // measurement.tags.clear();
+      // measurement.values.clear();
+      // mQueue.push(measurement);
+    }
+
+    co_return;
+  }
+
+  EventLoop::uio::task<> Writer(InfluxMessage &msg) {
+    // while(!mQueue.front()) { co_yield 0; };
+
+    // InfluxMessage* msg = mQueue.front();
+    std::size_t fileOffset{0};
+    std::size_t logOffset{0};
+
+    // Return early when there is room in memtable
+    // for()
+    mLogger->info("Writer received write for {}, ts: {}", msg.name,
+                  msg.timestamp);
+    for (const auto &measurement : msg.measurments) {
+      std::string name{msg.name + "." + measurement.name};
+      if (!mTrees.contains(name)) {
+        mLogger->info("New series for {}", name);
+        mTrees[name] = MetricTree{};
+      }
+
+      auto& db = mTrees[name];
+      // FIXME for now we only support longs
+      if(std::holds_alternative<std::uint64_t>(measurement.value)) {
+        db.memtable[db.ctr] = DataPoint{.timestamp = msg.timestamp, .value = std::get<std::uint64_t>(measurement.value)};
+        ++db.ctr;
+        if(db.ctr == memtableSize) {
+          mLogger->info("Flushing memtable for {}", name);
+          EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
+          EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
+
+          std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
+          co_await mNodeFile.Append(buf);
+
+          db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, fileOffset);
+
+          fileOffset += bufSize;
+          db.ctr = 0;
+        }
+      } 
+    }
+    co_return;
   }
 
   // std::vector<std::string_view>
