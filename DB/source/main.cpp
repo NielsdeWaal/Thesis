@@ -50,44 +50,49 @@ public:
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
-    
+
     // std::ifstream input("../medium-plus-1");
     std::ifstream input("../large-5");
     InfluxParser parser;
 
-    InfluxMessage measurement;
-    auto duration = 0;
+    // InfluxMessage measurement;
+    std::vector<InfluxMessage> messages;
+    messages.reserve(200000);
+    // auto duration = 0;
     for (std::string line; std::getline(input, line);) {
-      parser.Parse(line, measurement);
+      messages.emplace_back();
+      parser.Parse(line, messages.back());
       // mLogger->info("Wire: {} -> {} - {}", measurement.timestamp,
       //               fmt::join(measurement.tags, ", "),
       //               fmt::join(measurement.values, ", "));
       // mLogger->info("Wire: {} -> {}", measurement.timestamp,
       // fmt::join(measurement.measurments, ", "));
-
-      auto start = Common::MONOTONIC_CLOCK::Now();
-
-      co_await Writer(measurement);
-
-      auto end = Common::MONOTONIC_CLOCK::Now();
-      duration +=
-          Common::MONOTONIC_CLOCK::ToNanos(end - start); // / 100 / 100 / 100;
-
-      measurement.measurments.clear();
-
-      // measurement.tags.clear();
-      // measurement.values.clear();
-      // mQueue.push(measurement);
     }
+
+    auto start = Common::MONOTONIC_CLOCK::Now();
+
+    for (auto &measurement : messages) {
+      co_await Writer(measurement);
+    }
+
+    auto end = Common::MONOTONIC_CLOCK::Now();
+    auto duration =
+        Common::MONOTONIC_CLOCK::ToNanos(end - start); // / 100 / 100 / 100;
+
+    // measurement.measurments.clear();
+    // measurement.tags.clear();
+    // measurement.values.clear();
+    // mQueue.push(measurement);
     // mLogger->info("Ingestion took, {}ms, {} points, {} points/s", duration,
     //               data.size(),                    //(
     //               (data.size() / duration) * 1000 //) * 100 /// (duration /
     //               100)
     // );
-    double timeTakenS =  duration / 1000000000.;
+    double timeTakenS = duration / 1000000000.;
     double rateS = mIngestionCounter / timeTakenS;
     double dataRate = (rateS * sizeof(DataPoint)) / 1000000;
-    mLogger->info("Ingestion took, {}ns, {} points, {} points/sec, {} MB/s", duration, mIngestionCounter, rateS, dataRate);
+    mLogger->info("Ingestion took, {}ns, {} points, {} points/sec, {} MB/s",
+                  duration, mIngestionCounter, rateS, dataRate);
 
     mEv.Stop();
     // co_return;
@@ -111,12 +116,14 @@ public:
         mTrees[name] = MetricTree{};
       }
 
-      auto& db = mTrees[name];
+      auto &db = mTrees[name];
       // FIXME for now we only support longs
-      if(std::holds_alternative<std::uint64_t>(measurement.value)) {
-        db.memtable[db.ctr] = DataPoint{.timestamp = msg.timestamp, .value = std::get<std::uint64_t>(measurement.value)};
+      if (std::holds_alternative<std::uint64_t>(measurement.value)) {
+        db.memtable[db.ctr] =
+            DataPoint{.timestamp = msg.timestamp,
+                      .value = std::get<std::uint64_t>(measurement.value)};
         ++db.ctr;
-        if(db.ctr == memtableSize) {
+        if (db.ctr == memtableSize) {
           // mLogger->info("Flushing memtable for {}", name);
           EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
           EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
@@ -124,7 +131,8 @@ public:
           std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
           co_await mNodeFile.Append(buf);
 
-          db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, fileOffset);
+          db.tree.Insert(db.memtable.front().timestamp,
+                         db.memtable.back().timestamp, fileOffset);
 
           LogPoint *log = (LogPoint *)logBuf.GetPtr();
           log->start = db.memtable.front().timestamp;
@@ -136,7 +144,7 @@ public:
           logOffset += 512;
           db.ctr = 0;
         }
-      } 
+      }
       ++mIngestionCounter;
     }
     co_return;
