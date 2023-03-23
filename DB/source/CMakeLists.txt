@@ -5,7 +5,8 @@ add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
 add_executable(FrogFish
   main.cpp
-  FileManager.hpp)
+  FileManager.hpp
+  InfluxParser.hpp)
 
 # target_include_directories(FrogFish PUBLIC c)
 target_link_libraries(FrogFish 
