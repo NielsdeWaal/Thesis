@@ -56,6 +56,7 @@ public:
     InfluxParser parser;
 
     InfluxMessage measurement;
+    auto duration = 0;
     for (std::string line; std::getline(input, line);) {
       parser.Parse(line, measurement);
       // mLogger->info("Wire: {} -> {} - {}", measurement.timestamp,
@@ -63,14 +64,33 @@ public:
       //               fmt::join(measurement.values, ", "));
       // mLogger->info("Wire: {} -> {}", measurement.timestamp,
       // fmt::join(measurement.measurments, ", "));
+
+      auto start = Common::MONOTONIC_CLOCK::Now();
+
       co_await Writer(measurement);
+
+      auto end = Common::MONOTONIC_CLOCK::Now();
+      duration +=
+          Common::MONOTONIC_CLOCK::ToNanos(end - start); // / 100 / 100 / 100;
+
       measurement.measurments.clear();
+
       // measurement.tags.clear();
       // measurement.values.clear();
       // mQueue.push(measurement);
     }
+    // mLogger->info("Ingestion took, {}ms, {} points, {} points/s", duration,
+    //               data.size(),                    //(
+    //               (data.size() / duration) * 1000 //) * 100 /// (duration /
+    //               100)
+    // );
+    double timeTakenS =  duration / 1000000000.;
+    double rateS = mIngestionCounter / timeTakenS;
+    double dataRate = (rateS * sizeof(DataPoint)) / 1000000;
+    mLogger->info("Ingestion took, {}ns, {} points, {} points/sec, {} MB/s", duration, mIngestionCounter, rateS, dataRate);
 
-    co_return;
+    mEv.Stop();
+    // co_return;
   }
 
   EventLoop::uio::task<> Writer(InfluxMessage &msg) {
@@ -82,8 +102,8 @@ public:
 
     // Return early when there is room in memtable
     // for()
-    mLogger->info("Writer received write for {}, ts: {}", msg.name,
-                  msg.timestamp);
+    // mLogger->info("Writer received write for {}, ts: {}", msg.name,
+    //               msg.timestamp);
     for (const auto &measurement : msg.measurments) {
       std::string name{msg.name + "." + measurement.name};
       if (!mTrees.contains(name)) {
@@ -97,7 +117,7 @@ public:
         db.memtable[db.ctr] = DataPoint{.timestamp = msg.timestamp, .value = std::get<std::uint64_t>(measurement.value)};
         ++db.ctr;
         if(db.ctr == memtableSize) {
-          mLogger->info("Flushing memtable for {}", name);
+          // mLogger->info("Flushing memtable for {}", name);
           EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
           EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
 
@@ -106,10 +126,18 @@ public:
 
           db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, fileOffset);
 
+          LogPoint *log = (LogPoint *)logBuf.GetPtr();
+          log->start = db.memtable.front().timestamp;
+          log->end = db.memtable.back().timestamp;
+          log->offset = fileOffset;
+          co_await mLogFile.WriteAt(logBuf, logOffset);
+
           fileOffset += bufSize;
+          logOffset += 512;
           db.ctr = 0;
         }
       } 
+      ++mIngestionCounter;
     }
     co_return;
   }
@@ -387,6 +415,7 @@ private:
   DmaFile mLogFile;
   AppendOnlyFile mNodeFile;
   FileManager mFileManager;
+  std::uint64_t mIngestionCounter{0};
   std::shared_ptr<spdlog::logger> mLogger;
   // Common::StreamSocketServer mSocket;
 
