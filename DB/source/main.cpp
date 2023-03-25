@@ -9,6 +9,7 @@
 #include <string_view>
 
 #include <fmt/core.h>
+#include <rigtorp/SPSCQueue.h>
 
 #include <EventLoop.h>
 #include <File.h>
@@ -25,7 +26,19 @@ public:
                                   std::uint64_t pos) = 0;
 };
 
-class Handler //: public Common::IStreamSocketServerHandler
+// TODO
+// When starting the DB, start two tasks
+// 1. Network/Ingestion
+//   This task should read either from a file or from the network and should
+//   deliver parsed values to the writer task
+// 2. Writer
+//   Ingests values received from task 1.
+//   Series name is taken from ingested value and used to find the matching tree
+//   Data inserted into memtable corresponding to the tree
+//   When memtable is full, data is flushed to disk and log file
+
+class Handler : public EventLoop::IEventLoopCallbackHandler 
+              //: public Common::IStreamSocketServerHandler
               //: Common::StreamSocketServer
 {
 public:
@@ -34,6 +47,7 @@ public:
         mFileManager(mEv) // , mSocket(mEv, this)
   {
     mLogger = mEv.RegisterLogger("FrogFishDB");
+    mEv.RegisterCallbackHandler(this, EventLoop::EventLoop::LatencyType::Low);
     // mFiles.reserve(4);
     // func();
     // Writer();
@@ -69,32 +83,16 @@ public:
       // fmt::join(measurement.measurments, ", "));
     }
 
-    auto start = Common::MONOTONIC_CLOCK::Now();
+    mStarted = true;
+    // auto start = Common::MONOTONIC_CLOCK::Now();
+    mStartTS =  Common::MONOTONIC_CLOCK::Now();
 
     for (auto &measurement : messages) {
       co_await Writer(measurement);
     }
 
-    auto end = Common::MONOTONIC_CLOCK::Now();
-    auto duration =
-        Common::MONOTONIC_CLOCK::ToNanos(end - start); // / 100 / 100 / 100;
 
-    // measurement.measurments.clear();
-    // measurement.tags.clear();
-    // measurement.values.clear();
-    // mQueue.push(measurement);
-    // mLogger->info("Ingestion took, {}ms, {} points, {} points/s", duration,
-    //               data.size(),                    //(
-    //               (data.size() / duration) * 1000 //) * 100 /// (duration /
-    //               100)
-    // );
-    double timeTakenS = duration / 1000000000.;
-    double rateS = mIngestionCounter / timeTakenS;
-    double dataRate = (rateS * sizeof(DataPoint)) / 1000000;
-    mLogger->info("Ingestion took, {}ns, {} points, {} points/sec, {} MB/s",
-                  duration, mIngestionCounter, rateS, dataRate);
-
-    mEv.Stop();
+    // mEv.Stop();
     // co_return;
   }
 
@@ -102,8 +100,6 @@ public:
     // while(!mQueue.front()) { co_yield 0; };
 
     // InfluxMessage* msg = mQueue.front();
-    std::size_t fileOffset{0};
-    std::size_t logOffset{0};
 
     // Return early when there is room in memtable
     // for()
@@ -129,19 +125,54 @@ public:
           EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
 
           std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
-          co_await mNodeFile.Append(buf);
+          // co_await mNodeFile.Append(buf);
+          // auto op =  mNodeFile.Append(buf);
+          // auto op = std::make_pair<EventLoop::SqeAwaitable, EventLoop::deferred_resolver>(mNodeFile.Append(buf), EventLoop::deferred_resolver{});
+          // op.first.SetupData(op.second);
+          // if(!mIOQueue.try_push(op)) {
+          //   while(*mIOQueue.front()->second.result) {  }
+          // } 
+          // mIOQueue.push(op);
+          // if(!mIOQueue.try_emplace(mNodeFile.Append(buf), EventLoop::deferred_resolver{})) {
+          //   while(*mIOQueue.front()->second.result) {  }
+          // }
+          // mIOQueue.push(op);
+          // EventLoop::deferred_resolver resolver;
+          // auto awaitable = mNodeFile.Append(buf);
+          // awaitable.SetupData(resolver);
+          // if(mIOQueue.size() == 32) {
+          mIOQueue.push_back(WriteOperation{.buf = std::move(buf), .pos = mFileOffset, .type = File::NODE_FILE});
+            
+          // }
+          // if(!mIOQueue.try_push(std::move(resolver))) {
+          //   while(!(*mIOQueue.front()->result)) {  }
+          //   mIOQueue.push(std::move(resolver));
+          // }
+
+          // if(!mIOQueue.try_push(op)) {
+          //   co_await *mIOQueue.front();
+          //   mIOQueue.pop();
+          //   // op.SetupData();
+          //   // mIOQueue.push(op);
+          // } else {
+            
+          // }
+          // op.SetupData();
+          // op.first.SetupData(op.second);
+          // mIOQueue.push(op);
 
           db.tree.Insert(db.memtable.front().timestamp,
-                         db.memtable.back().timestamp, fileOffset);
+                         db.memtable.back().timestamp, mFileOffset);
 
           LogPoint *log = (LogPoint *)logBuf.GetPtr();
           log->start = db.memtable.front().timestamp;
           log->end = db.memtable.back().timestamp;
-          log->offset = fileOffset;
-          co_await mLogFile.WriteAt(logBuf, logOffset);
+          log->offset = mFileOffset;
+          // co_await mLogFile.WriteAt(logBuf, logOffset);
+          mIOQueue.push_back(WriteOperation{.buf = std::move(logBuf), .pos = mLogOffset, .type = File::LOG_FILE});
 
-          fileOffset += bufSize;
-          logOffset += 512;
+          mFileOffset += bufSize;
+          mLogOffset += 512;
           db.ctr = 0;
         }
       }
@@ -150,193 +181,46 @@ public:
     co_return;
   }
 
-  // std::vector<std::string_view>
-  // split_at_any(const std::string_view input,
-  //              const std::string_view delimiters) {
-  //   std::vector<std::string_view> result;
-  //   std::size_t last_pos = 0;
-  //   for (std::size_t i = 0; i < input.size(); ++i) {
-  //     if (delimiters.find(input[i]) != delimiters.npos) {
-  //       result.push_back(input.substr(last_pos, i - last_pos));
-  //       ++i;
-  //       last_pos = i;
-  //     }
-  //   }
+  void OnEventLoopCallback() override {
+    if(mOutstandingIO < 32 && mStarted) {
+      if(mIOQueue.front().type == File::NODE_FILE) {
+        mLogger->info("Room to issue request, writing to nodefile at pos: {}", mIOQueue.front().pos);
+        EventLoop::SqeAwaitable awaitable = mNodeFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
+        awaitable.SetCallback([&](int res){IOResolveCallback(res);});
+      } else if (mIOQueue.front().type == File::LOG_FILE) {
+        mLogger->info("Room to issue request, writing to log at pos: {}", mIOQueue.front().pos);
+        // mLogFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
+        EventLoop::SqeAwaitable awaitable = mLogFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
+        awaitable.SetCallback([&](int res){IOResolveCallback(res);});
+      }
+      mIOQueue.pop_front();
+      ++mOutstandingIO;
+      // issue operation
+    }
+    if(mIOQueue.size() == 0 && mStarted) {
+      auto end = Common::MONOTONIC_CLOCK::Now();
+      auto duration =
+          Common::MONOTONIC_CLOCK::ToNanos(end - mStartTS); // / 100 / 100 / 100;
 
-  //   return result;
-  // }
-  // EventLoop::uio::task<> func() {
-  //   // mFile.Create("/tmp/eventloop_file");
-  //   // int a = co_await mFile.OpenAt("/tmp/eventloop_file");
-  //   co_await mLogFile.OpenAt("./log.dat");
-  //   co_await mNodeFile.OpenAt("./nodes.dat");
-  //   co_await mFileManager.SetDataFiles(4);
-  //   // std::size_t count = 4;
-  //   // for(std::size_t i = 0; i < count; ++i) {
-  //   //   mLogger->info("Opening file nodes{}.dat", i);
-  //   //   mFiles.emplace_back(mEv);
-  //   //   co_await mFiles[i].OpenAt(fmt::format("nodes{}.dat", i));
-  //   // }
+      double timeTakenS = duration / 1000000000.;
+      double rateS = mIngestionCounter / timeTakenS;
+      double dataRate = (rateS * sizeof(DataPoint)) / 1000000;
+      mLogger->info("Ingestion took, {}ns, {} points, {} points/sec, {} MB/s",
+                    duration, mIngestionCounter, rateS, dataRate);
+      mEv.Stop();
+    }
+  }
 
-  //   // TODO create this file manually and fill with test data
-  //   // co_await mTestFile.OpenAt("./test");
-  //   auto data = LoadDataFile("../medium-plus-1");
-  //   // for(const auto& dp : data) {
-  //   //   mLogger->info("{} - {}", dp.timestamp, dp.value);
-  //   // }
+  void IOResolveCallback(int result) {
+    mOutstandingIO -= 1;
+  }
 
-  //   std::size_t fileOffset{0};
-  //   std::size_t logOffset{0};
-  //   EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
-  //   EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
-
-  //   std::size_t ctr{0};
-  //   std::array<DataPoint, memtableSize> memtable{};
-  //   // DataPointt* memtable = (DataPoint*)buf.GetPtr();
-  //   // std::array<DataPoint,memtableSize>& memtable =
-  //   // reinterpret_cast<std::array<DataPoint,
-  //   // memtableSize>&>((DataPoint*)buf.GetPtr()); DataPoint* memtable =
-  //   // (DataPoint*)buf.GetPtr();
-  //   auto start = Common::MONOTONIC_CLOCK::Now();
-
-  //   for (const auto &dp : data) {
-  //     if (!mTrees.contains(dp.series)) {
-  //       mLogger->info("New series {}, creaing trees", dp.series);
-  //       mTrees[dp.series] = MetricTree{.ctr = 0};
-  //     }
-  //     auto &tree = mTrees[dp.series];
-  //     // memtable.at(ctr) = dp;
-  //     // memtable[ctr] = dp;
-  //     tree.memtable[tree.ctr] =
-  //         DataPoint{.timestamp = dp.timestamp, .value = dp.value};
-  //     // ++ctr;
-  //     tree.ctr += 1;
-  //     if (tree.ctr == memtableSize) {
-  //       mLogger->info("Flushing memtable for {} ({} - {})", dp.series,
-  //                     tree.memtable.front().timestamp,
-  //                     tree.memtable.back().timestamp);
-  //       // mLogger->info("Flushing memtable ({} - {})",
-  //       memtable[0].timestamp,
-  //       // memtable[memtableSize].timestamp);
-  //       // std::memcpy(buf.GetPtr(), memtable.data(), bufSize);
-  //       // co_await mNodeFile.Append(buf);
-
-  //       EventLoop::DmaBuffer flushBuf = mEv.AllocateDmaBuffer(bufSize);
-  //       std::memcpy(flushBuf.GetPtr(), tree.memtable.data(), bufSize);
-  //       co_await mNodeFile.Append(flushBuf);
-
-  //       // flushBuf.Free();
-
-  //       // auto res = co_await mFileManager.InsertWrite(buf);
-  //       // while (res != FileStatus::SUCCEEDED) {
-  //       //   res = co_await mFileManager.InsertWrite(buf);
-  //       // }
-  //       // mTree.Insert(memtable.front().timestamp,
-  //       memtable.back().timestamp,
-  //       //              fileOffset);
-  //       tree.tree.Insert(tree.memtable.front().timestamp,
-  //                        tree.memtable.back().timestamp, fileOffset);
-
-  //       LogPoint *log = (LogPoint *)logBuf.GetPtr();
-  //       log->start = tree.memtable.front().timestamp;
-  //       log->end = tree.memtable.back().timestamp;
-  //       log->offset = fileOffset;
-  //       co_await mLogFile.WriteAt(logBuf, logOffset);
-
-  //       // mTree.Insert(memtable[0].timestamp,
-  //       memtable[memtableSize].timestamp,
-  //       // fileOffset);
-  //       ctr = 0;
-  //       fileOffset += bufSize;
-  //       logOffset += 512;
-  //     }
-  //   }
-
-  //   // TODO flush non empty memtables
-  //   // if (ctr != 0) {
-  //   //   mLogger->info("Flushing remaining (entries: {}) memtable ({} - {})",
-  //   //   ctr,
-  //   //                 memtable.front().timestamp,
-  //   memtable.at(ctr).timestamp);
-  //   //   // mLogger->info("Flushing remaining (entries: {}) memtable ({} -
-  //   {})",
-  //   //   // ctr, memtable[0].timestamp, memtable[ctr].timestamp);
-  //   //   std::memcpy(buf.GetPtr(), memtable.data(), ctr);
-  //   //   co_await mNodeFile.Append(buf);
-  //   //   // auto res = co_await mFileManager.InsertWrite(buf);
-  //   //   // while (res != FileStatus::SUCCEEDED) {
-  //   //   //   res = co_await mFileManager.InsertWrite(buf);
-  //   //   // }
-  //   //   mTree.Insert(memtable.front().timestamp, memtable.back().timestamp,
-  //   //                fileOffset);
-
-  //   //   LogPoint *log = (LogPoint *)logBuf.GetPtr();
-  //   //   log->start = memtable.front().timestamp;
-  //   //   log->end = memtable.at(ctr).timestamp;
-  //   //   log->offset = fileOffset;
-  //   //   co_await mLogFile.WriteAt(logBuf, logOffset);
-
-  //   //   // mTree.Insert(memtable[0].timestamp, memtable[ctr].timestamp,
-  //   //   // fileOffset);
-  //   //   ctr = 0;
-  //   //   fileOffset += bufSize;
-  //   //   logOffset += 512;
-  //   // }
-
-  //   auto end = Common::MONOTONIC_CLOCK::Now();
-  //   auto duration =
-  //       Common::MONOTONIC_CLOCK::ToNanos(end - start) / 100 / 100 / 100;
-
-  //   mLogger->info("Using memtable of size {}", memtableSize);
-
-  //   mLogger->info("Ingestion took, {}ms, {} points, {} points/s", duration,
-  //                 data.size(),                    //(
-  //                 (data.size() / duration) * 1000 //) * 100 /// (duration /
-  //                 100)
-  //   );
-
-  //   buf.Free();
-
-  //   for (auto &[name, metric] : mTrees) {
-  //     auto tree = metric.tree;
-  //     mLogger->info("Tree is height: {}", tree.GetHeight());
-  //     for (TimeTreeNode<64> &node : tree) {
-  //       mLogger->info("{} -> {} (links: {})", node.GetNodeStart(),
-  //                     node.GetNodeEnd(), node.GetChildCount());
-  //     }
-  //   }
-
-  //   // EventLoop::DmaBuffer testBuf = mEv.AllocateDmaBuffer(4096);
-  //   // EventLoop::DmaBuffer testBuf{4096};
-  //   // int ret = co_await mFile.Append(testBuf);
-  //   // assert(ret == 4096);
-
-  //   // EventLoop::DmaBuffer verificationBuf = mEv.AllocateDmaBuffer(4096);
-  //   // ret = co_await mFile.ReadAt(verificationBuf, 0);
-  //   // REQUIRE(ret == 4096);
-  //   // EventLoop::DmaBuffer verBuf = co_await mFile.ReadAt(0, 4096);
-  //   // assert(verBuf.GetSize() == 4096);
-
-  //   // co_await mFile.Close();
-
-  //   // verBuf.Free();
-
-  //   mEv.Stop();
-  // }
-
-  // Common::IStreamSocketHandler *OnIncomingConnection() final { return this; }
-
-  // void OnConnected() final {}
-
-  // void OnDisconnect([[maybe_unused]] Common::StreamSocket *conn) final {}
-
-  // void OnIncomingData([[maybe_unused]] Common::StreamSocket *conn, char
-  // *data,
-  //                     std::size_t len) final {
-  //   conn->Shutdown();
-  // }
 
 private:
+  enum class File : std::uint8_t {
+    NODE_FILE = 0,
+    LOG_FILE,
+  };
   struct DataPoint {
     std::uint64_t timestamp;
     std::uint64_t value;
@@ -345,6 +229,11 @@ private:
     std::uint64_t start;
     std::uint64_t end;
     std::uint64_t offset;
+  };
+  struct WriteOperation {
+    EventLoop::DmaBuffer buf;
+    std::uint64_t pos;
+    File type;
   };
 
   static constexpr std::size_t bufSize{4096};
@@ -361,74 +250,30 @@ private:
     std::uint64_t timestamp;
     std::uint64_t value;
   };
-  // std::vector<IngestionPoint> LoadDataFile(const std::string &filename) {
-  //   std::vector<IngestionPoint> resVec;
-  //   resVec.reserve(10000);
-  //   std::ifstream input(filename);
-  //   for (std::string line; std::getline(input, line);) {
-  //     // mLogger->info("{}", line);
-  //     // auto vec = split_at_any(line, " ");
-  //     // for (const auto str : vec) {
-  //     IngestionPoint dp{};
-  //     TokenGen tg{line, " "};
-  //     // tg();
-  //     // mLogger->info("{}", tg());
-  //     std::string name{tg()};
-  //     TokenGen values{tg(), ","};
-  //     TokenGen point{values(), "="};
-  //     point();
-  //     while (point) {
-  //       auto pt = point();
-  //       pt.remove_suffix(1);
-  //       int i;
-  //       auto res = std::from_chars(pt.data(), pt.data() + pt.size(), i);
-  //       if (res.ec == std::errc::invalid_argument) {
-  //         assert(false);
-  //       }
-  //       // mLogger->info("{}", i);
-  //       dp.value = i;
-  //     }
-  //     // mLogger->info("{}", tg());
-  //     std::uint64_t ts;
-  //     auto tsString = tg();
-  //     auto res = std::from_chars(tsString.data(),
-  //                                tsString.data() + tsString.size(), ts);
-  //     if (res.ec == std::errc::invalid_argument) {
-  //       assert(false);
-  //     }
-  //     dp.series = std::move(name);
-  //     dp.timestamp = ts;
-  //     resVec.push_back(dp);
-  //     // mLogger->info("{} -> {} - {}", dp.series, dp.timestamp, dp.value);
-  //   }
-  //   return resVec;
-  // }
-  // struct TokenGen {
-  //   std::string_view sv;
-  //   std::string_view del;
-  //   operator bool() const { return !sv.empty(); }
-  //   std::string_view operator()() {
-  //     auto r = sv;
-  //     const auto it = sv.find_first_of(del);
-  //     if (it == std::string_view::npos) {
-  //       sv = {};
-  //     } else {
-  //       r.remove_suffix(r.size() - it);
-  //       sv.remove_prefix(it + 1);
-  //     }
-  //     return r;
-  //   }
-  // };
   EventLoop::EventLoop &mEv;
   DmaFile mLogFile;
-  AppendOnlyFile mNodeFile;
+  // AppendOnlyFile mNodeFile;
+  DmaFile mNodeFile;
   FileManager mFileManager;
   std::uint64_t mIngestionCounter{0};
   std::shared_ptr<spdlog::logger> mLogger;
   // Common::StreamSocketServer mSocket;
 
   DmaFile mTestFile;
+  int mIngestionMethod{-1};
+
+  rigtorp::SPSCQueue<InfluxMessage> mQueue{32};
+  // rigtorp::SPSCQueue<std::pair<EventLoop::SqeAwaitable, EventLoop::deferred_resolver>> mIOQueue{32};
+  // rigtorp::SPSCQueue<EventLoop::deferred_resolver> mIOQueue{32};
+  std::deque<WriteOperation> mIOQueue{};
+  std::uint64_t mOutstandingIO{0};
+  bool mStarted{false};
+  std::size_t mFileOffset{0};
+  std::size_t mLogOffset{0};
   // std::vector<AppendOnlyFile> mFiles;
+
+  Common::MONOTONIC_TIME mStartTS{};
+  Common::MONOTONIC_TIME mEndTS{};
 
   // TimeTree<64> mTree;
   std::unordered_map<std::string, MetricTree> mTrees;
@@ -440,6 +285,7 @@ int main() {
   loop.Configure();
 
   Handler app(loop);
+  app.Configure();
 
   loop.Run();
 
