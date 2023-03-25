@@ -33,6 +33,7 @@ public:
   : mEv(ev)
   , mLogFile(mEv)
   , mNodeFile(mEv)
+  , mTSIndexFile(mEv)
   , mTestFile(mEv)
   , mFileManager(mEv) // , mSocket(mEv, this)
   {
@@ -131,13 +132,13 @@ public:
   }
 
   void OnEventLoopCallback() override {
-    if (mOutstandingIO < 32 && mStarted) {
+    if (mOutstandingIO < maxOutstandingIO && mStarted) {
       if (mIOQueue.front().type == File::NODE_FILE) {
-        mLogger->info("Room to issue request, writing to nodefile at pos: {}", mIOQueue.front().pos);
+        mLogger->debug("Room to issue request, writing to nodefile at pos: {}", mIOQueue.front().pos);
         EventLoop::SqeAwaitable awaitable = mNodeFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
         awaitable.SetCallback([&](int res) { IOResolveCallback(res); });
       } else if (mIOQueue.front().type == File::LOG_FILE) {
-        mLogger->info("Room to issue request, writing to log at pos: {}", mIOQueue.front().pos);
+        mLogger->debug("Room to issue request, writing to log at pos: {}", mIOQueue.front().pos);
         // mLogFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
         EventLoop::SqeAwaitable awaitable = mLogFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
         awaitable.SetCallback([&](int res) { IOResolveCallback(res); });
@@ -181,6 +182,12 @@ private:
     std::uint64_t start;
     std::uint64_t end;
     std::uint64_t offset;
+    std::uint64_t index;
+  };
+  struct TSIndexLog {
+    std::size_t len;
+    char* name;
+    std::uint64_t index;
   };
   struct WriteOperation {
     EventLoop::DmaBuffer buf;
@@ -188,7 +195,9 @@ private:
     File type;
   };
 
-  static constexpr std::size_t bufSize{4096};
+  static constexpr std::size_t maxOutstandingIO{48};
+  static constexpr std::size_t bufSize{2097152}; // 2MB
+  // static constexpr std::size_t bufSize{4096}; // 4KB
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
   struct MetricTree {
@@ -206,6 +215,7 @@ private:
   DmaFile mLogFile;
   // AppendOnlyFile mNodeFile;
   DmaFile mNodeFile;
+  AppendOnlyFile mTSIndexFile;
   FileManager mFileManager;
   std::uint64_t mIngestionCounter{0};
   std::shared_ptr<spdlog::logger> mLogger;
