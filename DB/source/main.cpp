@@ -23,17 +23,6 @@ public:
   virtual void InsertLogStatement(std::uint64_t start, std::uint64_t end, std::uint64_t pos) = 0;
 };
 
-// TODO
-// When starting the DB, start two tasks
-// 1. Network/Ingestion
-//   This task should read either from a file or from the network and should
-//   deliver parsed values to the writer task
-// 2. Writer
-//   Ingests values received from task 1.
-//   Series name is taken from ingested value and used to find the matching tree
-//   Data inserted into memtable corresponding to the tree
-//   When memtable is full, data is flushed to disk and log file
-
 class Handler
 : public EventLoop::IEventLoopCallbackHandler
 //: public Common::IStreamSocketServerHandler
@@ -77,6 +66,15 @@ public:
     for (std::string line; std::getline(input, line);) {
       messages.emplace_back();
       parser.Parse(line, messages.back());
+      for (InfluxMeasurement& measurement : messages.back().measurments) {
+        std::string name{messages.back().name + "." + measurement.name};
+        if (!mIndex.contains(name)) {
+          mIndex[name] = mIndexCounter;
+          mLogger->info("New series for {}", name);
+          mTrees[mIndexCounter] = MetricTree{};
+          ++mIndexCounter;
+        }
+      }
       // mLogger->info("Wire: {} -> {} - {}", measurement.timestamp,
       //               fmt::join(measurement.tags, ", "),
       //               fmt::join(measurement.values, ", "));
@@ -98,14 +96,8 @@ public:
   }
 
   EventLoop::uio::task<> Writer(InfluxMessage& msg) {
-    for (const auto& measurement : msg.measurments) {
-      std::string name{msg.name + "." + measurement.name};
-      if (!mTrees.contains(name)) {
-        mLogger->info("New series for {}", name);
-        mTrees[name] = MetricTree{};
-      }
-
-      auto& db = mTrees[name];
+    for (const InfluxMeasurement& measurement : msg.measurments) {
+      auto& db = mTrees[msg.index];
       // FIXME for now we only support longs
       if (std::holds_alternative<std::uint64_t>(measurement.value)) {
         db.memtable[db.ctr] =
@@ -236,7 +228,10 @@ private:
   Common::MONOTONIC_TIME mEndTS{};
 
   // TimeTree<64> mTree;
-  std::unordered_map<std::string, MetricTree> mTrees;
+  // std::unordered_map<std::string, MetricTree> mTrees;
+  std::unordered_map<std::uint64_t, MetricTree> mTrees;
+  std::unordered_map<std::string, std::uint64_t> mIndex;
+  std::uint64_t mIndexCounter{0};
 };
 
 int main() {

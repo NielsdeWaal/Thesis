@@ -2,13 +2,12 @@
 #define __INFLUX_PARSER
 
 #include <cstring>
-#include <string>
-#include <variant>
-#include <vector>
-
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <string>
+#include <variant>
+#include <vector>
 
 struct InfluxMeasurement {
   std::string name;
@@ -17,6 +16,7 @@ struct InfluxMeasurement {
 
 struct InfluxMessage {
   std::string name;
+  std::uint64_t index;
   // std::vector<std::string> tags;
   // std::vector<std::string> values;
   std::vector<InfluxMeasurement> measurments;
@@ -26,11 +26,11 @@ struct InfluxMessage {
 class InfluxParser {
 public:
   InfluxParser() = default;
-  InfluxParser(const std::string &filename) {}
+  InfluxParser(const std::string& filename) {}
 
   // TODO remove/replace with 'next' for when parser is opened
   // in file mode
-  void Parse(std::string &line, InfluxMessage& result) {
+  void Parse(std::string& line, InfluxMessage& result) {
     std::string::size_type pos = 0;
     std::string token;
 
@@ -75,32 +75,30 @@ public:
 
 private:
   std::variant<std::uint64_t, float> GetValue(const std::string& encoded) {
-    if(encoded.ends_with("i")) {
+    if (encoded.ends_with("i")) {
       return static_cast<std::uint64_t>(std::stoll(encoded.substr(0, encoded.size() - 1)));
     }
   }
 };
 
-template <> struct fmt::formatter<InfluxMeasurement> {
+template<> struct fmt::formatter<InfluxMeasurement> {
   // Presentation format: 'f' - fixed, 'e' - exponential.
   // char presentation = 'f';
 
-  template<typename ParseContext>
-  constexpr auto parse(ParseContext& ctx)
-  {
+  template<typename ParseContext> constexpr auto parse(ParseContext& ctx) {
     return ctx.begin();
   }
 
   // Formats the point p using the parsed format specification (presentation)
   // stored in this formatter.
-  template <typename FormatContext>
+  template<typename FormatContext>
   auto format(const InfluxMeasurement& p, FormatContext& ctx) const -> decltype(ctx.out()) {
     // ctx.out() is an output iterator to write to.
     // return presentation == 'f'
     //           ? fmt::format_to(ctx.out(), "({:.1f}, {:.1f})", p.x, p.y)
     //           : fmt::format_to(ctx.out(), "({:.1e}, {:.1e})", p.x, p.y);
     // return fmt::format_to(ctx.out(), "{} = {}", p.name, p.value);
-    if(std::holds_alternative<std::uint64_t>(p.value)) {
+    if (std::holds_alternative<std::uint64_t>(p.value)) {
       return fmt::format_to(ctx.out(), "{} = {}", p.name, std::get<std::uint64_t>(p.value));
     } else {
       return fmt::format_to(ctx.out(), "{} = {}", p.name, std::get<float>(p.value));
