@@ -140,8 +140,20 @@ FetchContent_Declare(
     GIT_REPOSITORY git@github.com:fmtlib/fmt.git
     GIT_TAG 9.1.0
 )
+# FetchContent_Declare(
+#     SPSCQueue
 
-FetchContent_MakeAvailable(CommonLibs TimeTree)
+#     GIT_REPOSITORY git@github.com:rigtorp/SPSCQueue.git
+#     GIT_TAG origin/master
+# )
+
+FetchContent_Declare(
+    lexy 
+    
+    URL https://lexy.foonathan.net/download/lexy-src.zip
+)
+
+FetchContent_MakeAvailable(CommonLibs TimeTree fmt lexy)
 # set_target_properties(EventLoop PROPERTIES IMPORTED_LOCATION k)
 # link_directories(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)
 # add_subdirectory(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)

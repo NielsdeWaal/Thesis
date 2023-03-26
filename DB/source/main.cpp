@@ -1,7 +1,12 @@
 // #include <source/EventLoop/EventLoop.h>
 #include "FileManager.hpp"
 #include "InfluxParser.hpp"
+#include "lexyparser.hpp"
 #include "TSC.h"
+
+#include <lexy/action/parse.hpp>
+#include <lexy/input/string_input.hpp>
+#include <lexy_ext/report_error.hpp>
 
 #include <charconv>
 #include <EventLoop.h>
@@ -9,7 +14,7 @@
 #include <fmt/core.h>
 #include <iomanip>
 #include <ranges>
-#include <rigtorp/SPSCQueue.h>
+// #include <rigtorp/SPSCQueue.h>
 #include <src/TimeTree.hpp>
 #include <sstream>
 #include <string>
@@ -89,8 +94,16 @@ public:
     // auto start = Common::MONOTONIC_CLOCK::Now();
     mStartTS = Common::MONOTONIC_CLOCK::Now();
 
-    for (auto& measurement : mInputs) {
-      co_await Writer(measurement);
+    std::size_t chunkSize{100};
+    for(auto chunk = mInputs.ReadChunk(chunkSize); chunk.has_value(); chunk = mInputs.ReadChunk(chunkSize)) {
+      mLogger->info("Reading chunk of size: {}", chunk->size());
+      for(auto& measurement : *chunk) {
+      // for (auto& measurement : mInputs) {
+      // for (const auto& measurement : mInputs.ReadChunk)
+        // TODO move writer task away from here and on to eventloop callback function
+        // Only write one chunk every cycle
+        co_await Writer(measurement);
+      }
     }
 
 
@@ -232,7 +245,7 @@ private:
   DmaFile mTestFile;
   int mIngestionMethod{-1};
 
-  rigtorp::SPSCQueue<InfluxMessage> mQueue{32};
+  // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};
   // rigtorp::SPSCQueue<std::pair<EventLoop::SqeAwaitable, EventLoop::deferred_resolver>> mIOQueue{32};
   // rigtorp::SPSCQueue<EventLoop::deferred_resolver> mIOQueue{32};
   std::deque<WriteOperation> mIOQueue{};
@@ -254,14 +267,30 @@ private:
 };
 
 int main() {
-  EventLoop::EventLoop loop;
-  loop.LoadConfig("FrogFish.toml");
-  loop.Configure();
+  auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar temperature=82,humidity=14 1465839830100400200");
+  assert(lexy::match<grammer::InfluxMessage>(testing) == true);
+  auto res = lexy::parse<grammer::InfluxMessage>(testing, lexy_ext::report_error);
+  // auto result = lexy::parse<grammer::production>();
+  if(res.has_value()) {
+    auto msg = res.value();
+    fmt::print("name: {}\n", msg.name);
+    for(auto& [k, v] : msg.tags) {
+      fmt::print("tags: {} - {}\n", k, v);
+    }
+    for(auto& [k, v] : msg.measurements) {
+      fmt::print("measurements: {} - {}\n", k, v);
+    }
+    fmt::print("ts: {}\n", msg.ts);
+  }
+  
+  // EventLoop::EventLoop loop;
+  // loop.LoadConfig("FrogFish.toml");
+  // loop.Configure();
 
-  Handler app(loop);
-  app.Configure();
+  // Handler app(loop);
+  // app.Configure();
 
-  loop.Run();
+  // loop.Run();
 
   return 0;
 }
