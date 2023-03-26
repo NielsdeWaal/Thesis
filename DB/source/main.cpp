@@ -36,9 +36,11 @@ public:
   , mTSIndexFile(mEv)
   , mTestFile(mEv)
   , mFileManager(mEv) // , mSocket(mEv, this)
+  , mInputs(mEv, "../small-5")
   {
     mLogger = mEv.RegisterLogger("FrogFishDB");
-    mEv.RegisterCallbackHandler(this, EventLoop::EventLoop::LatencyType::Low);
+    mEv.RegisterCallbackHandler((EventLoop::IEventLoopCallbackHandler*)this, EventLoop::EventLoop::LatencyType::Low);
+    // mInputs = InputManager(mEv, "../large-5");
     // mFiles.reserve(4);
     // func();
     // Writer();
@@ -57,37 +59,37 @@ public:
     co_await mNodeFile.OpenAt("./nodes.dat");
 
     // std::ifstream input("../medium-plus-1");
-    std::ifstream input("../large-5");
-    InfluxParser parser;
+    // std::ifstream input("../large-5");
+    // InfluxParser parser;
 
     // InfluxMessage measurement;
-    std::vector<InfluxMessage> messages;
-    messages.reserve(200000);
+    // std::vector<InfluxMessage> messages;
+    // messages.reserve(200000);
     // auto duration = 0;
-    for (std::string line; std::getline(input, line);) {
-      messages.emplace_back();
-      parser.Parse(line, messages.back());
-      for (InfluxMeasurement& measurement : messages.back().measurments) {
-        std::string name{messages.back().name + "." + measurement.name};
-        if (!mIndex.contains(name)) {
-          mIndex[name] = mIndexCounter;
-          mLogger->info("New series for {}", name);
-          mTrees[mIndexCounter] = MetricTree{};
-          ++mIndexCounter;
-        }
-      }
+    // for (std::string line; std::getline(input, line);) {
+    //   messages.emplace_back();
+    //   parser.Parse(line, messages.back());
+      // for (InfluxMeasurement& measurement : messages.back().measurments) {
+      //   std::string name{messages.back().name + "." + measurement.name};
+      //   if (!mIndex.contains(name)) {
+      //     mIndex[name] = mIndexCounter;
+      //     mLogger->info("New series for {}", name);
+      //     mTrees[mIndexCounter] = MetricTree{};
+      //     ++mIndexCounter;
+      //   }
+      // }
       // mLogger->info("Wire: {} -> {} - {}", measurement.timestamp,
       //               fmt::join(measurement.tags, ", "),
       //               fmt::join(measurement.values, ", "));
       // mLogger->info("Wire: {} -> {}", measurement.timestamp,
       // fmt::join(measurement.measurments, ", "));
-    }
+    // }
 
     mStarted = true;
     // auto start = Common::MONOTONIC_CLOCK::Now();
     mStartTS = Common::MONOTONIC_CLOCK::Now();
 
-    for (auto& measurement : messages) {
+    for (auto& measurement : mInputs) {
       co_await Writer(measurement);
     }
 
@@ -98,6 +100,9 @@ public:
 
   EventLoop::uio::task<> Writer(InfluxMessage& msg) {
     for (const InfluxMeasurement& measurement : msg.measurments) {
+      if(!mTrees.contains(msg.index)) {
+        mTrees[msg.index] = MetricTree{};
+      }
       auto& db = mTrees[msg.index];
       // FIXME for now we only support longs
       if (std::holds_alternative<std::uint64_t>(measurement.value)) {
@@ -105,12 +110,13 @@ public:
             DataPoint{.timestamp = msg.timestamp, .value = std::get<std::uint64_t>(measurement.value)};
         ++db.ctr;
         if (db.ctr == memtableSize) {
-          // mLogger->info("Flushing memtable for {}", name);
           EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
           EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
 
           std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
           mIOQueue.push_back(WriteOperation{.buf = std::move(buf), .pos = mFileOffset, .type = File::NODE_FILE});
+
+          mLogger->info("Flushing memtable for {} to file at addr: {}", msg.name + "." + measurement.name, mFileOffset);
 
           db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
 
@@ -147,6 +153,8 @@ public:
       ++mOutstandingIO;
       // issue operation
     }
+
+    // When done, print time it took
     if (mIOQueue.size() == 0 && mStarted) {
       auto end = Common::MONOTONIC_CLOCK::Now();
       auto duration = Common::MONOTONIC_CLOCK::ToNanos(end - mStartTS); // / 100 / 100 / 100;
@@ -196,8 +204,8 @@ private:
   };
 
   static constexpr std::size_t maxOutstandingIO{48};
-  static constexpr std::size_t bufSize{2097152}; // 2MB
-  // static constexpr std::size_t bufSize{4096}; // 4KB
+  // static constexpr std::size_t bufSize{2097152}; // 2MB
+  static constexpr std::size_t bufSize{4096}; // 4KB
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
   struct MetricTree {
@@ -237,11 +245,12 @@ private:
   Common::MONOTONIC_TIME mStartTS{};
   Common::MONOTONIC_TIME mEndTS{};
 
+  InputManager mInputs;
   // TimeTree<64> mTree;
   // std::unordered_map<std::string, MetricTree> mTrees;
   std::unordered_map<std::uint64_t, MetricTree> mTrees;
-  std::unordered_map<std::string, std::uint64_t> mIndex;
-  std::uint64_t mIndexCounter{0};
+  // std::unordered_map<std::string, std::uint64_t> mIndex;
+  // std::uint64_t mIndexCounter{0};
 };
 
 int main() {

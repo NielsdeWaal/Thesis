@@ -5,7 +5,10 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <span>
+#include <spdlog/logger.h>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -26,7 +29,8 @@ struct InfluxMessage {
 class InfluxParser {
 public:
   InfluxParser() = default;
-  InfluxParser(const std::string& filename) {}
+  InfluxParser(const std::string& filename)
+  : mFile{filename} {}
 
   // TODO remove/replace with 'next' for when parser is opened
   // in file mode
@@ -71,6 +75,13 @@ public:
     result.timestamp = ts;
   }
 
+  void ParseAll(std::vector<InfluxMessage>& messages) {
+    for (std::string line; std::getline(mFile, line);) {
+      messages.emplace_back();
+      Parse(line, messages.back());
+    }
+  }
+
   // TODO write iterator for file mode
 
 private:
@@ -79,12 +90,59 @@ private:
       return static_cast<std::uint64_t>(std::stoll(encoded.substr(0, encoded.size() - 1)));
     }
   }
+
+  std::ifstream mFile{};
+};
+
+class InputManager {
+public: 
+  InputManager() = default;
+  InputManager(EventLoop::EventLoop& ev, const std::string& filename)
+  : mParser(filename) 
+  {
+    mLogger = ev.RegisterLogger("InputManager");
+    mMessages.reserve(2000000);
+    mParser.ParseAll(mMessages);
+
+    for (InfluxMessage& msg : mMessages) {
+      for (InfluxMeasurement& measurement : msg.measurments) {
+        std::string name{msg.name + "." + measurement.name};
+        if (!mIndex.contains(name)) {
+          mIndex[name] = mIndexCounter;
+          mLogger->info("New series for {}, assigning id: {}", name, mIndexCounter);
+          // mTrees[mIndexCounter] = MetricTree{};
+          ++mIndexCounter;
+        }
+      }
+    }
+  }
+
+  std::span<InfluxMessage> ReadChunk() {
+    
+  }
+
+  auto begin() {
+    return mMessages.begin();
+  }
+
+  auto end() {
+    return mMessages.end();
+  }
+
+  // std::unordered_map<std::string, std::uint64_t>& GetMapping() {
+    
+  // }
+
+private: 
+  InfluxParser mParser;
+  std::vector<InfluxMessage> mMessages;
+  std::unordered_map<std::string, std::uint64_t> mIndex{};
+  std::uint64_t mIndexCounter{0};
+
+  std::shared_ptr<spdlog::logger> mLogger;
 };
 
 template<> struct fmt::formatter<InfluxMeasurement> {
-  // Presentation format: 'f' - fixed, 'e' - exponential.
-  // char presentation = 'f';
-
   template<typename ParseContext> constexpr auto parse(ParseContext& ctx) {
     return ctx.begin();
   }
@@ -93,11 +151,6 @@ template<> struct fmt::formatter<InfluxMeasurement> {
   // stored in this formatter.
   template<typename FormatContext>
   auto format(const InfluxMeasurement& p, FormatContext& ctx) const -> decltype(ctx.out()) {
-    // ctx.out() is an output iterator to write to.
-    // return presentation == 'f'
-    //           ? fmt::format_to(ctx.out(), "({:.1f}, {:.1f})", p.x, p.y)
-    //           : fmt::format_to(ctx.out(), "({:.1e}, {:.1e})", p.x, p.y);
-    // return fmt::format_to(ctx.out(), "{} = {}", p.name, p.value);
     if (std::holds_alternative<std::uint64_t>(p.value)) {
       return fmt::format_to(ctx.out(), "{} = {}", p.name, std::get<std::uint64_t>(p.value));
     } else {
