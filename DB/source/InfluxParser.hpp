@@ -5,6 +5,7 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <optional>
 #include <span>
 #include <spdlog/logger.h>
 #include <string>
@@ -28,7 +29,7 @@ struct InfluxMessage {
 
 class InfluxParser {
 public:
-  InfluxParser() = default;
+  // InfluxParser() = default;
   InfluxParser(const std::string& filename)
   : mFile{filename} {}
 
@@ -91,7 +92,7 @@ private:
     }
   }
 
-  std::ifstream mFile{};
+  std::ifstream mFile;
 };
 
 class InputManager {
@@ -117,8 +118,19 @@ public:
     }
   }
 
-  std::span<InfluxMessage> ReadChunk() {
-    
+  std::optional<std::span<InfluxMessage>> ReadChunk(std::size_t length) {
+    if(mReaderOffset >= mMessages.size()) {
+      return std::nullopt;
+    }
+
+    // auto maxOffset = std::min(mReaderOffset + length, mMessages.size());
+    // auto res = std::span(mMessages.begin() + mReaderOffset, mMessages.begin() + mReaderOffset + length);
+    auto res = std::span(mMessages.begin() + mReaderOffset, mReaderOffset + length <= mMessages.size() ? length : 0U);
+    if(res.empty()) {
+      return std::nullopt;
+    }
+    mReaderOffset += length;
+    return res;
   }
 
   auto begin() {
@@ -138,6 +150,7 @@ private:
   std::vector<InfluxMessage> mMessages;
   std::unordered_map<std::string, std::uint64_t> mIndex{};
   std::uint64_t mIndexCounter{0};
+  std::size_t mReaderOffset{0};
 
   std::shared_ptr<spdlog::logger> mLogger;
 };
