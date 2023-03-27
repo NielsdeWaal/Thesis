@@ -16,21 +16,21 @@ struct IMessage {
   std::uint64_t ts;
 };
 
-namespace grammer {
+namespace grammar {
   namespace dsl = lexy::dsl;
 
   struct name {
     static constexpr auto rule
         // One or more alpha numeric characters, underscores or hyphens.
-        = dsl::identifier(dsl::unicode::alnum);
+        = dsl::identifier(dsl::unicode::alnum / dsl::lit_c<'_'>);
 
     static constexpr auto value = lexy::as_string<std::string>;
   };
 
   struct tag_value {
     static constexpr auto rule = [] {
-      auto head = dsl::ascii::alpha_underscore / dsl::lit_c<'-'>;
-      auto tail = dsl::ascii::alpha_digit_underscore / dsl::lit_c<'-'>;
+      auto head = dsl::ascii::alpha_digit_underscore / dsl::lit_c<'-'> / /*dsl::lit_c<' '> /*/ dsl::lit_c<'.'>;
+      auto tail = dsl::ascii::alpha_digit_underscore / dsl::lit_c<'-'> / /*dsl::lit_c<' '> /*/ dsl::lit_c<'.'>;
       return dsl::identifier(head, tail);
     }();
 
@@ -41,7 +41,7 @@ namespace grammer {
     static constexpr auto rule = [] {
       auto head = dsl::ascii::digit;
       auto tail = dsl::ascii::alpha_digit;
-      return dsl::identifier(head);
+      return dsl::identifier(head, tail);
     }();
 
     // static constexpr auto value = lexy::as_integer<int>;
@@ -82,13 +82,15 @@ namespace grammer {
     static constexpr auto value = lexy::as_integer<std::uint64_t>;
   };
 
+  // TODO this is only used for files, investigate how this works with UDP buffers
   struct InfluxMessage {
-    static constexpr auto rule = dsl::p<name> + dsl::lit_c<','> + dsl::p<tags> + dsl::lit_c<' '> + dsl::p<measurements>
-                                 + dsl::lit_c<' '> + dsl::p<timestamp>;
+    static constexpr auto rule = [] {
+      auto item = dsl::p<name> + dsl::lit_c<','> + dsl::p<tags> + dsl::lit_c<' '> + dsl::p<measurements>
+                  + dsl::lit_c<' '> + dsl::p<timestamp> + dsl::eol;
+      auto terminator = dsl::terminator(dsl::eof);
+      return terminator.list(item);
+    }();
 
-    static constexpr auto value = lexy::construct<IMessage>;
-    // static constexpr auto value = lexy::as_string<std::string>;
+    static constexpr auto value = lexy::as_list<std::vector<IMessage>>;
   };
-
-  // struct InfluxMessages
 } // namespace grammer

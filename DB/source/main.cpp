@@ -4,15 +4,15 @@
 #include "lexyparser.hpp"
 #include "TSC.h"
 
-#include <lexy/action/parse.hpp>
-#include <lexy/input/string_input.hpp>
-#include <lexy_ext/report_error.hpp>
-
 #include <charconv>
 #include <EventLoop.h>
 #include <File.h>
 #include <fmt/core.h>
 #include <iomanip>
+#include <lexy/action/parse.hpp>
+#include <lexy/input/file.hpp>
+#include <lexy/input/string_input.hpp>
+#include <lexy_ext/report_error.hpp>
 #include <ranges>
 // #include <rigtorp/SPSCQueue.h>
 #include <src/TimeTree.hpp>
@@ -41,10 +41,9 @@ public:
   , mTSIndexFile(mEv)
   , mTestFile(mEv)
   , mFileManager(mEv) // , mSocket(mEv, this)
-  , mInputs(mEv, "../small-5")
-  {
+  , mInputs(mEv, "../small-5") {
     mLogger = mEv.RegisterLogger("FrogFishDB");
-    mEv.RegisterCallbackHandler((EventLoop::IEventLoopCallbackHandler*)this, EventLoop::EventLoop::LatencyType::Low);
+    mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
     // mFiles.reserve(4);
     // func();
@@ -74,20 +73,20 @@ public:
     // for (std::string line; std::getline(input, line);) {
     //   messages.emplace_back();
     //   parser.Parse(line, messages.back());
-      // for (InfluxMeasurement& measurement : messages.back().measurments) {
-      //   std::string name{messages.back().name + "." + measurement.name};
-      //   if (!mIndex.contains(name)) {
-      //     mIndex[name] = mIndexCounter;
-      //     mLogger->info("New series for {}", name);
-      //     mTrees[mIndexCounter] = MetricTree{};
-      //     ++mIndexCounter;
-      //   }
-      // }
-      // mLogger->info("Wire: {} -> {} - {}", measurement.timestamp,
-      //               fmt::join(measurement.tags, ", "),
-      //               fmt::join(measurement.values, ", "));
-      // mLogger->info("Wire: {} -> {}", measurement.timestamp,
-      // fmt::join(measurement.measurments, ", "));
+    // for (InfluxMeasurement& measurement : messages.back().measurments) {
+    //   std::string name{messages.back().name + "." + measurement.name};
+    //   if (!mIndex.contains(name)) {
+    //     mIndex[name] = mIndexCounter;
+    //     mLogger->info("New series for {}", name);
+    //     mTrees[mIndexCounter] = MetricTree{};
+    //     ++mIndexCounter;
+    //   }
+    // }
+    // mLogger->info("Wire: {} -> {} - {}", measurement.timestamp,
+    //               fmt::join(measurement.tags, ", "),
+    //               fmt::join(measurement.values, ", "));
+    // mLogger->info("Wire: {} -> {}", measurement.timestamp,
+    // fmt::join(measurement.measurments, ", "));
     // }
 
     mStarted = true;
@@ -95,11 +94,11 @@ public:
     mStartTS = Common::MONOTONIC_CLOCK::Now();
 
     std::size_t chunkSize{100};
-    for(auto chunk = mInputs.ReadChunk(chunkSize); chunk.has_value(); chunk = mInputs.ReadChunk(chunkSize)) {
+    for (auto chunk = mInputs.ReadChunk(chunkSize); chunk.has_value(); chunk = mInputs.ReadChunk(chunkSize)) {
       mLogger->info("Reading chunk of size: {}", chunk->size());
-      for(auto& measurement : *chunk) {
-      // for (auto& measurement : mInputs) {
-      // for (const auto& measurement : mInputs.ReadChunk)
+      for (auto& measurement : *chunk) {
+        // for (auto& measurement : mInputs) {
+        // for (const auto& measurement : mInputs.ReadChunk)
         // TODO move writer task away from here and on to eventloop callback function
         // Only write one chunk every cycle
         co_await Writer(measurement);
@@ -113,7 +112,7 @@ public:
 
   EventLoop::uio::task<> Writer(InfluxMessage& msg) {
     for (const InfluxMeasurement& measurement : msg.measurments) {
-      if(!mTrees.contains(msg.index)) {
+      if (!mTrees.contains(msg.index)) {
         mTrees[msg.index] = MetricTree{};
       }
       auto& db = mTrees[msg.index];
@@ -267,22 +266,29 @@ private:
 };
 
 int main() {
-  auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar temperature=82,humidity=14 1465839830100400200");
-  assert(lexy::match<grammer::InfluxMessage>(testing) == true);
-  auto res = lexy::parse<grammer::InfluxMessage>(testing, lexy_ext::report_error);
+  // auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar
+  // temperature=82,humidity=14 1465839830100400200"); assert(lexy::match<grammer::InfluxMessage>(testing) == true);
+  // auto res = lexy::parse<grammer::InfluxMessage>(testing, lexy_ext::report_error);
+  auto file = lexy::read_file<lexy::utf8_encoding>("../small-1");
+  // { … }
+
+  auto result = lexy::parse<grammar::InfluxMessage>(file.buffer(), lexy_ext::report_error.path("../small-5"));
   // auto result = lexy::parse<grammer::production>();
-  if(res.has_value()) {
-    auto msg = res.value();
-    fmt::print("name: {}\n", msg.name);
-    for(auto& [k, v] : msg.tags) {
-      fmt::print("tags: {} - {}\n", k, v);
-    }
-    for(auto& [k, v] : msg.measurements) {
-      fmt::print("measurements: {} - {}\n", k, v);
-    }
-    fmt::print("ts: {}\n", msg.ts);
+  if (result.has_value()) {
+    auto res = result.value();
+    fmt::print("{}", res.size());
+    // for (const IMessage& msg : res) {
+    //   fmt::print("name: {}\n", msg.name);
+    //   for (auto& [k, v] : msg.tags) {
+    //     fmt::print("tags: {} - {}\n", k, v);
+    //   }
+    //   for (auto& [k, v] : msg.measurements) {
+    //     fmt::print("measurements: {} - {}\n", k, v);
+    //   }
+    //   fmt::print("ts: {}\n", msg.ts);
+    // }
   }
-  
+
   // EventLoop::EventLoop loop;
   // loop.LoadConfig("FrogFish.toml");
   // loop.Configure();
