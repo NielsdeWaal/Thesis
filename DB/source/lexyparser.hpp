@@ -12,6 +12,7 @@ struct InfluxMValue {
 struct InfluxKV {
   std::string name;
   std::variant<std::string, InfluxMValue> value;
+  std::uint64_t index{0};
 };
 
 struct IMessage {

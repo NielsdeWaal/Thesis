@@ -1,7 +1,7 @@
 // #include <source/EventLoop/EventLoop.h>
 #include "FileManager.hpp"
 #include "InfluxParser.hpp"
-#include "lexyparser.hpp"
+// #include "lexyparser.hpp"
 #include "TSC.h"
 
 #include <charconv>
@@ -41,7 +41,7 @@ public:
   , mTSIndexFile(mEv)
   , mTestFile(mEv)
   , mFileManager(mEv) // , mSocket(mEv, this)
-  , mInputs(mEv, "../small-5") {
+  , mInputs(mEv, "../small-1") {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
@@ -110,16 +110,17 @@ public:
     // co_return;
   }
 
-  EventLoop::uio::task<> Writer(InfluxMessage& msg) {
-    for (const InfluxMeasurement& measurement : msg.measurments) {
-      if (!mTrees.contains(msg.index)) {
-        mTrees[msg.index] = MetricTree{};
+  // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
+  EventLoop::uio::task<> Writer(IMessage& msg) {
+    for (const InfluxKV& measurement : msg.measurements) {
+      if (!mTrees.contains(measurement.index)) {
+        mTrees[measurement.index] = MetricTree{};
       }
-      auto& db = mTrees[msg.index];
+      auto& db = mTrees[measurement.index];
       // FIXME for now we only support longs
-      if (std::holds_alternative<std::uint64_t>(measurement.value)) {
+      if (std::holds_alternative<InfluxMValue>(measurement.value)) {
         db.memtable[db.ctr] =
-            DataPoint{.timestamp = msg.timestamp, .value = std::get<std::uint64_t>(measurement.value)};
+            DataPoint{.timestamp = msg.ts, .value = std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value)};
         ++db.ctr;
         if (db.ctr == memtableSize) {
           EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
@@ -128,7 +129,7 @@ public:
           std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
           mIOQueue.push_back(WriteOperation{.buf = std::move(buf), .pos = mFileOffset, .type = File::NODE_FILE});
 
-          mLogger->info("Flushing memtable for {} to file at addr: {}", msg.name + "." + measurement.name, mFileOffset);
+          mLogger->info("Flushing memtable for {} (index; {}) to file at addr: {}", msg.name + "." + measurement.name, measurement.index, mFileOffset);
 
           db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
 
@@ -269,14 +270,14 @@ int main() {
   // auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar temperature=82i,humidity=14.0 1465839830100400200"); 
   // assert(lexy::match<grammar::InfluxMessage>(testing) == true);
   // auto res = lexy::parse<grammar::InfluxMessage>(testing, lexy_ext::report_error);
-  auto file = lexy::read_file<lexy::utf8_encoding>("../small-1");
+  // auto file = lexy::read_file<lexy::utf8_encoding>("../small-1");
   // { … }
 
-  auto result = lexy::parse<grammar::InfluxMessage>(file.buffer(), lexy_ext::report_error.path("../small-5"));
+  // auto result = lexy::parse<grammar::InfluxMessage>(file.buffer(), lexy_ext::report_error.path("../small-5"));
   // auto result = lexy::parse<grammer::production>();
-  if (result.has_value()) {
-    auto res = result.value();
-    fmt::print("{}", res.size());
+  // if (result.has_value()) {
+  //   auto res = result.value();
+  //   fmt::print("{}", res.size());
     // IMessage& m = res.front();
     // InfluxMValue val = std::get<InfluxMValue>(m.measurements.front().value);
     // std::int64_t intVal = std::get<std::int64_t>(val.value);
@@ -291,16 +292,16 @@ int main() {
     //   }
     //   fmt::print("ts: {}\n", msg.ts);
     // }
-  }
+  // }
 
-  // EventLoop::EventLoop loop;
-  // loop.LoadConfig("FrogFish.toml");
-  // loop.Configure();
+  EventLoop::EventLoop loop;
+  loop.LoadConfig("FrogFish.toml");
+  loop.Configure();
 
-  // Handler app(loop);
-  // app.Configure();
+  Handler app(loop);
+  app.Configure();
 
-  // loop.Run();
+  loop.Run();
 
   return 0;
 }
