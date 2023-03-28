@@ -63,32 +63,23 @@ public:
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
 
-    // std::ifstream input("../medium-plus-1");
-    // std::ifstream input("../large-5");
-    // InfluxParser parser;
+    if(mLogFile.FileSize() > 0) {
+      mLogger->info("Found existing log file, recreating indexing structures");
+      std::size_t numBlocks = mLogFile.FileSize() / 512;
+      mLogger->info("Reading {} blocks", numBlocks);
+      for(std::size_t i = 0; i < numBlocks; ++i) {
+        EventLoop::DmaBuffer logBuf = co_await mLogFile.ReadAt(i * 512, 512);
+        LogPoint* log = ( LogPoint* ) logBuf.GetPtr();
 
-    // InfluxMessage measurement;
-    // std::vector<InfluxMessage> messages;
-    // messages.reserve(200000);
-    // auto duration = 0;
-    // for (std::string line; std::getline(input, line);) {
-    //   messages.emplace_back();
-    //   parser.Parse(line, messages.back());
-    // for (InfluxMeasurement& measurement : messages.back().measurments) {
-    //   std::string name{messages.back().name + "." + measurement.name};
-    //   if (!mIndex.contains(name)) {
-    //     mIndex[name] = mIndexCounter;
-    //     mLogger->info("New series for {}", name);
-    //     mTrees[mIndexCounter] = MetricTree{};
-    //     ++mIndexCounter;
-    //   }
-    // }
-    // mLogger->info("Wire: {} -> {} - {}", measurement.timestamp,
-    //               fmt::join(measurement.tags, ", "),
-    //               fmt::join(measurement.values, ", "));
-    // mLogger->info("Wire: {} -> {}", measurement.timestamp,
-    // fmt::join(measurement.measurments, ", "));
-    // }
+        mLogger->info("Found insertion with index: {} for range: ({} -> {}) at offset: {}", log->index, log->start, log->end, log->offset);
+
+        if(!mTrees.contains(log->index)) {
+          mTrees[log->index] = MetricTree{};
+        }
+
+        mTrees[log->index].tree.Insert(log->start, log->end, log->offset);
+      }
+    }
 
     mStarted = true;
     // auto start = Common::MONOTONIC_CLOCK::Now();
@@ -105,16 +96,13 @@ public:
         co_await Writer(measurement);
       }
     }
-
-
-    // mEv.Stop();
-    // co_return;
   }
 
   // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
   EventLoop::uio::task<> Writer(IMessage& msg) {
     for (const InfluxKV& measurement : msg.measurements) {
       if (!mTrees.contains(measurement.index)) {
+        mLogger->info("Creating structures for new series");
         mTrees[measurement.index] = MetricTree{};
       }
       auto& db = mTrees[measurement.index];
@@ -132,12 +120,14 @@ public:
 
           mLogger->info("Flushing memtable for {} (index: {}) to file at addr: {}", msg.name + "." + measurement.name, measurement.index, mFileOffset);
 
+          // FIXME handle case where insertion fails for whatever reason
           db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
 
           LogPoint* log = ( LogPoint* ) logBuf.GetPtr();
           log->start = db.memtable.front().timestamp;
           log->end = db.memtable.back().timestamp;
           log->offset = mFileOffset;
+          log->index = measurement.index;
           // co_await mLogFile.WriteAt(logBuf, logOffset);
           mIOQueue.push_back(WriteOperation{.buf = std::move(logBuf), .pos = mLogOffset, .type = File::LOG_FILE});
 
