@@ -115,7 +115,11 @@ public:
     for(IMessage& msg : mMessages) {
       for(InfluxKV& kv : msg.measurements ) {
         auto& val = std::get<InfluxMValue>(kv.value);
-        std::string name{msg.name + "." + kv.name};
+        // std::string name{msg.name + "." + kv.name};
+        std::string name = msg.name + ".";
+        std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag){name.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");});
+        name.append(kv.name);
+        // std::string name = fmt::format("{}.{}.{}", msg.name, fmt::join());
         if (!mIndex.contains(name)) {
           mIndex[name] = mIndexCounter;
           mLogger->info("New series for {}, assigning id: {}", name, mIndexCounter);
