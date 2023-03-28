@@ -41,7 +41,7 @@ public:
   , mTSIndexFile(mEv)
   , mTestFile(mEv)
   , mFileManager(mEv) // , mSocket(mEv, this)
-  , mInputs(mEv, "../small-1") {
+  , mInputs(mEv) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
@@ -58,6 +58,7 @@ public:
   }
 
   EventLoop::uio::task<> IngestionTask() {
+    co_await mInputs.ReadFromFile("../small-1");
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
@@ -129,7 +130,7 @@ public:
           std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
           mIOQueue.push_back(WriteOperation{.buf = std::move(buf), .pos = mFileOffset, .type = File::NODE_FILE});
 
-          mLogger->info("Flushing memtable for {} (index; {}) to file at addr: {}", msg.name + "." + measurement.name, measurement.index, mFileOffset);
+          mLogger->info("Flushing memtable for {} (index: {}) to file at addr: {}", msg.name + "." + measurement.name, measurement.index, mFileOffset);
 
           db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
 

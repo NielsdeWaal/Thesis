@@ -2,6 +2,7 @@
 #define __INFLUX_PARSER
 
 #include "lexyparser.hpp"
+#include "SeriesIndex.hpp"
 
 #include <cstring>
 #include <fmt/core.h>
@@ -103,35 +104,9 @@ private:
 class InputManager {
 public:
   InputManager() = default;
-  InputManager(EventLoop::EventLoop& ev, const std::string& filename): mParser(filename) {
+  InputManager(EventLoop::EventLoop& ev): /*mParser(filename),*/ mIndex(ev) {
     mLogger = ev.RegisterLogger("InputManager");
-    auto file = lexy::read_file<lexy::utf8_encoding>(filename.c_str());
-    auto result = lexy::parse<grammar::InfluxMessage>(file.buffer(), lexy_ext::report_error.path("../small-5"));
-    if(!result.has_value()) {
-      mLogger->critical("Failed to parse file");
-      throw std::runtime_error("Failed to parse file");
-    }
-    mMessages = result.value();
-    for(IMessage& msg : mMessages) {
-      for(InfluxKV& kv : msg.measurements ) {
-        auto& val = std::get<InfluxMValue>(kv.value);
-        // std::string name{msg.name + "." + kv.name};
-        std::string name = msg.name + ".";
-        std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag){name.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");});
-        name.append(kv.name);
-        // std::string name = fmt::format("{}.{}.{}", msg.name, fmt::join());
-        if (!mIndex.contains(name)) {
-          mIndex[name] = mIndexCounter;
-          mLogger->info("New series for {}, assigning id: {}", name, mIndexCounter);
-          kv.index = mIndexCounter;
-          // mTrees[mIndexCounter] = MetricTree{};
-          ++mIndexCounter;
-        } else {
-          kv.index = mIndex[name];
-        }
-
-      }
-    }
+    // ReadFromFile(filename);
     // mMessages.reserve(2000000);
     // mParser.ParseAll(mMessages);
 
@@ -146,6 +121,46 @@ public:
     //     }
     //   }
     // }
+  }
+
+  EventLoop::uio::task<> ReadFromFile(const std::string& filename) {
+    co_await mIndex.SetupFiles();
+    
+    auto file = lexy::read_file<lexy::utf8_encoding>(filename.c_str());
+    auto result = lexy::parse<grammar::InfluxMessage>(file.buffer(), lexy_ext::report_error.path(filename.c_str()));
+    if (!result.has_value()) {
+      mLogger->critical("Failed to parse file");
+      throw std::runtime_error("Failed to parse file");
+    }
+    mMessages = result.value();
+    for (IMessage& msg : mMessages) {
+      for (InfluxKV& kv : msg.measurements) {
+        auto& val = std::get<InfluxMValue>(kv.value);
+        // std::string name{msg.name + "." + kv.name};
+        std::string name = msg.name + ".";
+        std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag) {
+          name.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");
+        });
+        name.append(kv.name);
+        // std::string name = fmt::format("{}.{}.{}", msg.name, fmt::join());
+        if(auto index = mIndex.GetIndex(name); index.has_value()) {
+          kv.index = index.value();
+        } else {
+          // mLogger->info("New series for {}, assigning id: {}", name, mIndexCounter);
+          kv.index = co_await mIndex.AddSeries(name);
+        }
+        // if (!mIndex.contains(name)) {
+        //   mIndex[name] = mIndexCounter;
+        //   mLogger->info("New series for {}, assigning id: {}", name, mIndexCounter);
+        //   kv.index = mIndexCounter;
+        //   // mTrees[mIndexCounter] = MetricTree{};
+        //   ++mIndexCounter;
+        // } else {
+        //   kv.index = mIndex[name];
+        // }
+      }
+    }
+    
   }
 
   // std::optional<std::span<InfluxMessage>> ReadChunk(std::size_t length) {
@@ -177,12 +192,14 @@ public:
   // }
 
 private:
-  InfluxParser mParser;
+  // InfluxParser mParser;
   // std::vector<InfluxMessage> mMessages;
   std::vector<IMessage> mMessages;
-  std::unordered_map<std::string, std::uint64_t> mIndex{};
+  // std::unordered_map<std::string, std::uint64_t> mIndex{};
   std::uint64_t mIndexCounter{0};
   std::size_t mReaderOffset{0};
+
+  Index mIndex;
 
   std::shared_ptr<spdlog::logger> mLogger;
 };

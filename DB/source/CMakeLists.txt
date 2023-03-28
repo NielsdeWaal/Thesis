@@ -9,7 +9,8 @@ add_executable(FrogFish
   FileManager.hpp
   InfluxParser.hpp
   lexyparser.hpp
-  lexy_user_config.hpp)
+  lexy_user_config.hpp
+  SeriesIndex.hpp)
 
 # target_include_directories(FrogFish PUBLIC c)
 target_link_libraries(FrogFish 
