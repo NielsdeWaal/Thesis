@@ -266,9 +266,9 @@ private:
 };
 
 int main() {
-  // auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar
-  // temperature=82,humidity=14 1465839830100400200"); assert(lexy::match<grammer::InfluxMessage>(testing) == true);
-  // auto res = lexy::parse<grammer::InfluxMessage>(testing, lexy_ext::report_error);
+  // auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar temperature=82i,humidity=14.0 1465839830100400200"); 
+  // assert(lexy::match<grammar::InfluxMessage>(testing) == true);
+  // auto res = lexy::parse<grammar::InfluxMessage>(testing, lexy_ext::report_error);
   auto file = lexy::read_file<lexy::utf8_encoding>("../small-1");
   // { … }
 
@@ -277,6 +277,10 @@ int main() {
   if (result.has_value()) {
     auto res = result.value();
     fmt::print("{}", res.size());
+    // IMessage& m = res.front();
+    // InfluxMValue val = std::get<InfluxMValue>(m.measurements.front().value);
+    // std::int64_t intVal = std::get<std::int64_t>(val.value);
+    // fmt::print("read: {}\n", intVal);
     // for (const IMessage& msg : res) {
     //   fmt::print("name: {}\n", msg.name);
     //   for (auto& [k, v] : msg.tags) {
