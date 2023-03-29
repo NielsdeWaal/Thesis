@@ -58,7 +58,7 @@ public:
   }
 
   EventLoop::uio::task<> IngestionTask() {
-    co_await mInputs.ReadFromFile("../small-1");
+    co_await mInputs.ReadFromFile("../medium-plus-1");
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
@@ -85,17 +85,6 @@ public:
     // auto start = Common::MONOTONIC_CLOCK::Now();
     mStartTS = Common::MONOTONIC_CLOCK::Now();
 
-    std::size_t chunkSize{100};
-    for (auto chunk = mInputs.ReadChunk(chunkSize); chunk.has_value(); chunk = mInputs.ReadChunk(chunkSize)) {
-      mLogger->info("Reading chunk of size: {}", chunk->size());
-      for (auto& measurement : *chunk) {
-        // for (auto& measurement : mInputs) {
-        // for (const auto& measurement : mInputs.ReadChunk)
-        // TODO move writer task away from here and on to eventloop callback function
-        // Only write one chunk every cycle
-        co_await Writer(measurement);
-      }
-    }
   }
 
   // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
@@ -141,7 +130,25 @@ public:
     co_return;
   }
 
+  EventLoop::uio::task<> HandleIngestion() {
+    if(mStarted) {
+      std::size_t chunkSize{1000};
+      for (auto chunk = mInputs.ReadChunk(chunkSize); chunk.has_value(); chunk = mInputs.ReadChunk(chunkSize)) {
+        mLogger->info("Reading chunk of size: {}", chunk->size());
+        for (auto& measurement : *chunk) {
+          // for (auto& measurement : mInputs) {
+          // for (const auto& measurement : mInputs.ReadChunk)
+          // TODO move writer task away from here and on to eventloop callback function
+          // Only write one chunk every cycle
+          co_await Writer(measurement);
+        }
+      }
+    }
+  }
+
   void OnEventLoopCallback() override {
+    HandleIngestion();
+    
     if (mOutstandingIO < maxOutstandingIO && mStarted) {
       if (mIOQueue.front().type == File::NODE_FILE) {
         mLogger->debug("Room to issue request, writing to nodefile at pos: {}", mIOQueue.front().pos);
@@ -208,8 +215,8 @@ private:
   };
 
   static constexpr std::size_t maxOutstandingIO{48};
-  // static constexpr std::size_t bufSize{2097152}; // 2MB
-  static constexpr std::size_t bufSize{4096}; // 4KB
+  static constexpr std::size_t bufSize{2097152}; // 2MB
+  // static constexpr std::size_t bufSize{4096}; // 4KB
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
   struct MetricTree {
