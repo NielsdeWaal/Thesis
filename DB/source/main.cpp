@@ -1,6 +1,7 @@
 // #include <source/EventLoop/EventLoop.h>
 #include "FileManager.hpp"
 #include "InfluxParser.hpp"
+#include "MemTable.hpp"
 // #include "lexyparser.hpp"
 #include "TSC.h"
 
@@ -19,6 +20,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <memory>
 
 class Storage {
 public:
@@ -58,7 +60,8 @@ public:
   }
 
   EventLoop::uio::task<> IngestionTask() {
-    co_await mInputs.ReadFromFile("../medium-plus-1");
+    // co_await mInputs.ReadFromFile("../medium-plus-1");
+    co_await mInputs.ReadFromFile("../large");
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
@@ -74,10 +77,11 @@ public:
         mLogger->info("Found insertion with index: {} for range: ({} -> {}) at offset: {}", log->index, log->start, log->end, log->offset);
 
         if(!mTrees.contains(log->index)) {
-          mTrees[log->index] = MetricTree{};
+          // mTrees[log->index] = MetricTree{.memtable = Memtable<NULLCompressor, bufSize>{mEv}};
+          mTrees[log->index] = std::make_unique<MetricTree>(mEv);
         }
 
-        mTrees[log->index].tree.Insert(log->start, log->end, log->offset);
+        mTrees[log->index]->tree.Insert(log->start, log->end, log->offset);
       }
     }
 
@@ -92,38 +96,48 @@ public:
     for (const InfluxKV& measurement : msg.measurements) {
       if (!mTrees.contains(measurement.index)) {
         mLogger->info("Creating structures for new series");
-        mTrees[measurement.index] = MetricTree{};
+        // mTrees[measurement.index] = MetricTree{.memtable= Memtable<NULLCompressor, bufSize>{mEv}};
+        mTrees[measurement.index] = std::make_unique<MetricTree>(mEv);
       }
       auto& db = mTrees[measurement.index];
       // FIXME for now we only support longs
       if (std::holds_alternative<InfluxMValue>(measurement.value)) {
-        db.memtable[db.ctr] =
-            DataPoint{.timestamp = msg.ts, .value = std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value)};
-        ++db.ctr;
-        if (db.ctr == memtableSize) {
-          EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
-          EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
+        // db.memtable[db.ctr] =
+        //     DataPoint{.timestamp = msg.ts, .value = std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value)};
+        // ++db.ctr;
+        db->memtable.Insert(msg.ts, std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value));
+        if (db->memtable.IsFull()) {
+          // EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
+          auto [startTS, endTS] = db->memtable.GetTimeRange();
+          db->memtable.Flush(db->flushBuf);
 
-          std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
-          mIOQueue.push_back(WriteOperation{.buf = std::move(buf), .pos = mFileOffset, .type = File::NODE_FILE});
+          // EventLoop::DmaBuffer buf = db->memtable.Flush();
+          // EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
 
-          mLogger->info("Flushing memtable for {} (index: {}) to file at addr: {}", msg.name + "." + measurement.name, measurement.index, mFileOffset);
+          // std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
+          mIOQueue.push_back(WriteOperation{.buf = db->flushBuf, .pos = mFileOffset, .type = File::NODE_FILE});
 
           // FIXME handle case where insertion fails for whatever reason
-          db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
+          // db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
+          db->tree.Insert(startTS, endTS, mFileOffset);
 
-          LogPoint* log = ( LogPoint* ) logBuf.GetPtr();
-          log->start = db.memtable.front().timestamp;
-          log->end = db.memtable.back().timestamp;
+          mLogger->info("Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}", msg.name + "." + measurement.name, measurement.index, startTS, endTS, mFileOffset);
+
+          LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
+          log->start = startTS;
+          log->end = endTS;
           log->offset = mFileOffset;
           log->index = measurement.index;
           // co_await mLogFile.WriteAt(logBuf, logOffset);
-          mIOQueue.push_back(WriteOperation{.buf = std::move(logBuf), .pos = mLogOffset, .type = File::LOG_FILE});
+          mIOQueue.push_back(WriteOperation{.buf = db->logBuf, .pos = mLogOffset, .type = File::LOG_FILE});
 
           mFileOffset += bufSize;
           mLogOffset += 512;
-          db.ctr = 0;
+          db->ctr = 0;
         }
+      } else {
+        // Something must have gone wrong during parsing
+        assert(false);
       }
       ++mIngestionCounter;
     }
@@ -149,7 +163,7 @@ public:
   void OnEventLoopCallback() override {
     HandleIngestion();
     
-    if (mOutstandingIO < maxOutstandingIO && mStarted) {
+    if (mIOQueue.size() > 0 && mOutstandingIO < maxOutstandingIO && mStarted) {
       if (mIOQueue.front().type == File::NODE_FILE) {
         mLogger->debug("Room to issue request, writing to nodefile at pos: {}", mIOQueue.front().pos);
         EventLoop::SqeAwaitable awaitable = mNodeFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
@@ -166,7 +180,9 @@ public:
     }
 
     // When done, print time it took
-    if (mIOQueue.size() == 0 && mStarted) {
+    // TODO, instead of waiting for the queue to be empty, check with mInputs if there is anythin
+    // left to be consumed
+    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted) {
       auto end = Common::MONOTONIC_CLOCK::Now();
       auto duration = Common::MONOTONIC_CLOCK::ToNanos(end - mStartTS); // / 100 / 100 / 100;
 
@@ -195,7 +211,7 @@ private:
   };
   struct DataPoint {
     std::uint64_t timestamp;
-    std::uint64_t value;
+    std::int64_t value;
   };
   struct LogPoint {
     std::uint64_t start;
@@ -209,7 +225,7 @@ private:
     std::uint64_t index;
   };
   struct WriteOperation {
-    EventLoop::DmaBuffer buf;
+    EventLoop::DmaBuffer& buf;
     std::uint64_t pos;
     File type;
   };
@@ -220,9 +236,13 @@ private:
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
   struct MetricTree {
+    MetricTree(EventLoop::EventLoop& ev) : memtable(ev) , flushBuf(ev.AllocateDmaBuffer(bufSize)) , logBuf(ev.AllocateDmaBuffer(512)) {}
     TimeTree<64> tree;
     std::size_t ctr;
-    std::array<DataPoint, memtableSize> memtable{};
+    // std::array<DataPoint, memtableSize> memtable{};
+    Memtable<NULLCompressor, bufSize> memtable;
+    EventLoop::DmaBuffer flushBuf;
+    EventLoop::DmaBuffer logBuf;
   };
 
   struct IngestionPoint {
@@ -259,7 +279,8 @@ private:
   InputManager mInputs;
   // TimeTree<64> mTree;
   // std::unordered_map<std::string, MetricTree> mTrees;
-  std::unordered_map<std::uint64_t, MetricTree> mTrees;
+  // std::unordered_map<std::uint64_t, MetricTree> mTrees;
+  std::unordered_map<std::uint64_t, std::unique_ptr<MetricTree>> mTrees;
   // std::unordered_map<std::string, std::uint64_t> mIndex;
   // std::uint64_t mIndexCounter{0};
 };
