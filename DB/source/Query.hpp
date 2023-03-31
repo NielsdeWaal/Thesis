@@ -5,7 +5,6 @@
 #include "EventLoop.h"
 #include "UringCommands.h"
 #include <cstdint>
-#include <initializer_list>
 #include <memory>
 #include <vector>
 
@@ -19,8 +18,8 @@ class Query: EventLoop::IUringCallbackHandler {
 public:
   Query() = default;
 
-  Query(EventLoop::EventLoop& ev, int fd, std::initializer_list<IOOP> ops) {}
-  Query(EventLoop::EventLoop& ev, int fd, std::initializer_list<std::uint64_t> addrs, std::size_t blockSize) {
+  Query(EventLoop::EventLoop& ev, int fd, std::vector<IOOP> ops) {}
+  Query(EventLoop::EventLoop& ev, int fd, std::vector<std::uint64_t> addrs, std::size_t blockSize) {
     mInFlightIO.reserve(addrs.size());
     for (const std::uint64_t addr : addrs) {
       std::unique_ptr<EventLoop::UserData> data = std::make_unique<EventLoop::UserData>();
@@ -40,7 +39,8 @@ public:
     return mInFlightIO.empty();
   }
 
-  void OnCompletion(EventLoop::CompletionQueueEvent& cqe, const EventLoop::UserData* data) override {}
+  void OnCompletion(EventLoop::CompletionQueueEvent& cqe, const EventLoop::UserData* data) override {
+  }
 
 private:
   std::vector<IOOP> mInFlightIO{};

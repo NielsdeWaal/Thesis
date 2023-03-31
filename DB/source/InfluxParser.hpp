@@ -34,6 +34,7 @@ struct InfluxMessage {
   std::uint64_t timestamp;
 };
 
+// TODO can be removed
 class InfluxParser {
 public:
   // InfluxParser() = default;
