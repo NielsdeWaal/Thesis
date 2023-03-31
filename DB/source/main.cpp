@@ -3,6 +3,7 @@
 #include "InfluxParser.hpp"
 #include "MemTable.hpp"
 // #include "lexyparser.hpp"
+#include "Query.hpp"
 #include "TSC.h"
 
 #include <charconv>
@@ -96,7 +97,7 @@ public:
   }
 
   // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
-  EventLoop::uio::task<> Writer(IMessage& msg) {
+  EventLoop::uio::task<> Writer(const IMessage& msg) {
     for (const InfluxKV& measurement : msg.measurements) {
       if (!mTrees.contains(measurement.index)) {
         mLogger->info("Creating structures for new series");
@@ -174,6 +175,7 @@ public:
     HandleIngestion();
 
     if (mIOQueue.size() > 0 && mOutstandingIO < maxOutstandingIO && mStarted) {
+      // TODO instead of awaitables, these can just be regular uring requests
       if (mIOQueue.front().type == File::NODE_FILE) {
         mLogger->debug("Room to issue request, writing to nodefile at pos: {}", mIOQueue.front().pos);
         EventLoop::SqeAwaitable awaitable = mNodeFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
@@ -295,6 +297,8 @@ private:
   // std::unordered_map<std::string, MetricTree> mTrees;
   // std::unordered_map<std::uint64_t, MetricTree> mTrees;
   std::unordered_map<std::uint64_t, std::unique_ptr<MetricTree>> mTrees;
+
+  std::vector<Query> mRunningQueries;
   // std::unordered_map<std::string, std::uint64_t> mIndex;
   // std::uint64_t mIndexCounter{0};
 };
