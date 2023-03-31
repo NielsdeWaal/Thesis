@@ -16,11 +16,11 @@
 #include <lexy_ext/report_error.hpp>
 #include <ranges>
 // #include <rigtorp/SPSCQueue.h>
+#include <memory>
 #include <src/TimeTree.hpp>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <memory>
 
 class Storage {
 public:
@@ -60,23 +60,28 @@ public:
   }
 
   EventLoop::uio::task<> IngestionTask() {
-    // co_await mInputs.ReadFromFile("../medium-plus-1");
-    co_await mInputs.ReadFromFile("../large");
+    co_await mInputs.ReadFromFile("../medium-plus-1");
+    // co_await mInputs.ReadFromFile("../large");
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
 
-    if(mLogFile.FileSize() > 0) {
+    if (mLogFile.FileSize() > 0) {
       mLogger->info("Found existing log file, recreating indexing structures");
       std::size_t numBlocks = mLogFile.FileSize() / 512;
       mLogger->info("Reading {} blocks", numBlocks);
-      for(std::size_t i = 0; i < numBlocks; ++i) {
+      for (std::size_t i = 0; i < numBlocks; ++i) {
         EventLoop::DmaBuffer logBuf = co_await mLogFile.ReadAt(i * 512, 512);
         LogPoint* log = ( LogPoint* ) logBuf.GetPtr();
 
-        mLogger->info("Found insertion with index: {} for range: ({} -> {}) at offset: {}", log->index, log->start, log->end, log->offset);
+        mLogger->info(
+            "Found insertion with index: {} for range: ({} -> {}) at offset: {}",
+            log->index,
+            log->start,
+            log->end,
+            log->offset);
 
-        if(!mTrees.contains(log->index)) {
+        if (!mTrees.contains(log->index)) {
           // mTrees[log->index] = MetricTree{.memtable = Memtable<NULLCompressor, bufSize>{mEv}};
           mTrees[log->index] = std::make_unique<MetricTree>(mEv);
         }
@@ -88,7 +93,6 @@ public:
     mStarted = true;
     // auto start = Common::MONOTONIC_CLOCK::Now();
     mStartTS = Common::MONOTONIC_CLOCK::Now();
-
   }
 
   // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
@@ -103,7 +107,8 @@ public:
       // FIXME for now we only support longs
       if (std::holds_alternative<InfluxMValue>(measurement.value)) {
         // db.memtable[db.ctr] =
-        //     DataPoint{.timestamp = msg.ts, .value = std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value)};
+        //     DataPoint{.timestamp = msg.ts, .value =
+        //     std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value)};
         // ++db.ctr;
         db->memtable.Insert(msg.ts, std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value));
         if (db->memtable.IsFull()) {
@@ -121,7 +126,13 @@ public:
           // db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
           db->tree.Insert(startTS, endTS, mFileOffset);
 
-          mLogger->info("Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}", msg.name + "." + measurement.name, measurement.index, startTS, endTS, mFileOffset);
+          mLogger->info(
+              "Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}",
+              msg.name + "." + measurement.name,
+              measurement.index,
+              startTS,
+              endTS,
+              mFileOffset);
 
           LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
           log->start = startTS;
@@ -145,24 +156,23 @@ public:
   }
 
   EventLoop::uio::task<> HandleIngestion() {
-    if(mStarted) {
+    if (mStarted) {
       std::size_t chunkSize{1000};
-      for (auto chunk = mInputs.ReadChunk(chunkSize); chunk.has_value(); chunk = mInputs.ReadChunk(chunkSize)) {
+      auto chunk = mInputs.ReadChunk(chunkSize);
+      if (chunk.has_value()) {
         mLogger->info("Reading chunk of size: {}", chunk->size());
-        for (auto& measurement : *chunk) {
-          // for (auto& measurement : mInputs) {
-          // for (const auto& measurement : mInputs.ReadChunk)
-          // TODO move writer task away from here and on to eventloop callback function
-          // Only write one chunk every cycle
+        for (const auto& measurement : *chunk) {
           co_await Writer(measurement);
         }
+      } else {
+        mDone = true;
       }
     }
   }
 
   void OnEventLoopCallback() override {
     HandleIngestion();
-    
+
     if (mIOQueue.size() > 0 && mOutstandingIO < maxOutstandingIO && mStarted) {
       if (mIOQueue.front().type == File::NODE_FILE) {
         mLogger->debug("Room to issue request, writing to nodefile at pos: {}", mIOQueue.front().pos);
@@ -182,7 +192,7 @@ public:
     // When done, print time it took
     // TODO, instead of waiting for the queue to be empty, check with mInputs if there is anythin
     // left to be consumed
-    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted) {
+    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mDone == true) {
       auto end = Common::MONOTONIC_CLOCK::Now();
       auto duration = Common::MONOTONIC_CLOCK::ToNanos(end - mStartTS); // / 100 / 100 / 100;
 
@@ -236,7 +246,10 @@ private:
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
   struct MetricTree {
-    MetricTree(EventLoop::EventLoop& ev) : memtable(ev) , flushBuf(ev.AllocateDmaBuffer(bufSize)) , logBuf(ev.AllocateDmaBuffer(512)) {}
+    MetricTree(EventLoop::EventLoop& ev)
+    : memtable(ev)
+    , flushBuf(ev.AllocateDmaBuffer(bufSize))
+    , logBuf(ev.AllocateDmaBuffer(512)) {}
     TimeTree<64> tree;
     std::size_t ctr;
     // std::array<DataPoint, memtableSize> memtable{};
@@ -271,6 +284,7 @@ private:
   bool mStarted{false};
   std::size_t mFileOffset{0};
   std::size_t mLogOffset{0};
+  bool mDone{false};
   // std::vector<AppendOnlyFile> mFiles;
 
   Common::MONOTONIC_TIME mStartTS{};
@@ -286,8 +300,8 @@ private:
 };
 
 int main() {
-  // auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar temperature=82i,humidity=14.0 1465839830100400200"); 
-  // assert(lexy::match<grammar::InfluxMessage>(testing) == true);
+  // auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar
+  // temperature=82i,humidity=14.0 1465839830100400200"); assert(lexy::match<grammar::InfluxMessage>(testing) == true);
   // auto res = lexy::parse<grammar::InfluxMessage>(testing, lexy_ext::report_error);
   // auto file = lexy::read_file<lexy::utf8_encoding>("../small-1");
   // { … }
@@ -297,20 +311,20 @@ int main() {
   // if (result.has_value()) {
   //   auto res = result.value();
   //   fmt::print("{}", res.size());
-    // IMessage& m = res.front();
-    // InfluxMValue val = std::get<InfluxMValue>(m.measurements.front().value);
-    // std::int64_t intVal = std::get<std::int64_t>(val.value);
-    // fmt::print("read: {}\n", intVal);
-    // for (const IMessage& msg : res) {
-    //   fmt::print("name: {}\n", msg.name);
-    //   for (auto& [k, v] : msg.tags) {
-    //     fmt::print("tags: {} - {}\n", k, v);
-    //   }
-    //   for (auto& [k, v] : msg.measurements) {
-    //     fmt::print("measurements: {} - {}\n", k, v);
-    //   }
-    //   fmt::print("ts: {}\n", msg.ts);
-    // }
+  // IMessage& m = res.front();
+  // InfluxMValue val = std::get<InfluxMValue>(m.measurements.front().value);
+  // std::int64_t intVal = std::get<std::int64_t>(val.value);
+  // fmt::print("read: {}\n", intVal);
+  // for (const IMessage& msg : res) {
+  //   fmt::print("name: {}\n", msg.name);
+  //   for (auto& [k, v] : msg.tags) {
+  //     fmt::print("tags: {} - {}\n", k, v);
+  //   }
+  //   for (auto& [k, v] : msg.measurements) {
+  //     fmt::print("measurements: {} - {}\n", k, v);
+  //   }
+  //   fmt::print("ts: {}\n", msg.ts);
+  // }
   // }
 
   EventLoop::EventLoop loop;
