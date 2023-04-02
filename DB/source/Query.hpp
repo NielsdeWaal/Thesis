@@ -113,14 +113,14 @@ public:
   OrExpression() = default;
 
   bool operator()() {
-    return (*this->mLeft) || (*this->mRight);
+    return (*this->mLeft)() || (*this->mRight)();
   }
 };
 
 template<typename LeftType, typename RightType, typename ResType> class AndExpression: public Expression<ResType> {
 public:
   bool operator()() {
-    return (*this->mLeft) && (*this->mRight);
+    return (*this->mLeft)() && (*this->mRight)();
   }
 };
 
@@ -145,9 +145,11 @@ class lt: public BinaryExpression<LeftType, RightType, ResType> {
 public:
   lt(Expression<LeftType>&& left, Expression<RightType>&& right)
   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+  lt(Expression<LeftType>* left, Expression<RightType>* right)
+  : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
 
   ResType operator()() const {
-    return (*this->mLeft)() > (*this->mRight)();
+    return (*this->mLeft)() < (*this->mRight)();
   }
 };
 
@@ -156,8 +158,10 @@ class gt: public BinaryExpression<LeftType, RightType, ResType> {
 public:
   gt(Expression<LeftType>&& left, Expression<RightType>&& right)
   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+  gt(Expression<LeftType>* left, Expression<RightType>* right)
+  : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
   ResType operator()() const {
-    return (*this->mLeft) < (*this->mRight);
+    return (*this->mLeft)() > (*this->mRight)();
   }
 };
 
