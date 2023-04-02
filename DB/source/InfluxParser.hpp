@@ -188,6 +188,10 @@ public:
     return mMessages.end();
   }
 
+  auto GetIndex(const std::string& name) {
+    return mIndex.GetIndex(name);
+  }
+
   // std::unordered_map<std::string, std::uint64_t>& GetMapping() {
 
   // }
