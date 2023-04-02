@@ -148,6 +148,13 @@ FetchContent_Declare(
 # )
 
 FetchContent_Declare(
+    tl-expected
+
+    GIT_REPOSITORY git@github.com:TartanLlama/expected.git
+    GIT_TAG v1.1.0
+)
+
+FetchContent_Declare(
     lexy 
     
     URL https://lexy.foonathan.net/download/lexy-src.zip
