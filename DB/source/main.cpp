@@ -234,15 +234,36 @@ public:
             DataPoint* points = ( DataPoint* ) buf.GetPtr();
 
             // Expression<std::uint64_t>* tsToken = new NumberToken<std::uint64_t>(points[0].timestamp);
-            Expression<std::uint64_t>* tsConst = new NumberToken<std::uint64_t>(1452916200000000000);
+            // Expression<std::uint64_t>* tsConst = new NumberToken<std::uint64_t>(1452916200000000000);
+            // Expression<std::uint64_t>* qValue = new NumberToken<std::uint64_t>(99);
+            // for (int i = 0; i < memtableSize; ++i) {
+            // Expression<std::uint64_t>* tsToken = new NumberToken<std::uint64_t>(points[i].value);
+            // // bool filterRes = eq<std::uint64_t, std::uint64_t, bool>(tsToken, tsConst)();
+            // bool filterRes = OrExpression<gt<std::uint64_t, std::uint64_t, bool>, gt<std::uint64_t, std::uint64_t,
+            // bool>, bool>(
+            //     new gt<std::uint64_t, std::uint64_t, bool>(new NumberToken<std::uint64_t>(points[i].value), new
+            //     NumberToken<std::uint64_t>(99)), new gt<std::uint64_t, std::uint64_t, bool>(new
+            //     NumberToken<std::uint64_t>(points[i].timestamp),
+            //        new NumberToken<std::uint64_t>(1452485190000000000)))();
+            // if (filterRes) {
+            //   mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+            // }
+            // }
+            using namespace SeriesQuery;
+            // auto expr = Expr(AndExpr{LiteralExpr{2}, LiteralExpr{3}});
 
+            // memtableSize is the size of the buffer when seen as an array of DataPoint's
             for (int i = 0; i < memtableSize; ++i) {
-              Expression<std::uint64_t>* tsToken = new NumberToken<std::uint64_t>(points[i].timestamp);
-              bool filterRes = eq<std::uint64_t, std::uint64_t, bool>(tsToken, tsConst)();
-              if(filterRes) {
+              // auto qRes = evaluate(Expr(AndExpr{GtExpr{LiteralExpr{points[i].value}, LiteralExpr{99}}, 
+              //                                   GtExpr{LiteralExpr{points[i].timestamp}, LiteralExpr{1452600980000000000}}}));
+              // auto qRes = evaluate(Expr(GtExpr{LiteralExpr{points[i].value}, LiteralExpr{99}}));
+              auto qRes = evaluate(Expr(AndExpr{GtExpr{LiteralExpr{points[i].timestamp}, LiteralExpr{1452600980000000000}}, GtExpr{LiteralExpr{points[i].value}, LiteralExpr{99}}}));
+              // mLogger->info("qRes: {}", qRes);
+              if (qRes) {
                 mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
               }
             }
+            // mLogger->info("res: {}", qRes);
           }
 
           std::erase(mRunningQueries, op);

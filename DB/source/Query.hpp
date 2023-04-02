@@ -86,97 +86,212 @@ class QueryBuilder {};
 
 class QueryManager {};
 
-template<typename ReturnType> struct Expression {
-  virtual ~Expression(){};
-  virtual ReturnType operator()() const = 0;
-};
+// template<typename ReturnType> struct Expression {
+//   virtual ~Expression(){};
+//   virtual ReturnType operator()() const = 0;
+// };
 
-template<typename ValueType> struct ValueToken: public Expression<ValueType> {
-  ValueToken(const ValueType value): mValue(value) {}
+// template<typename ValueType> struct ValueToken: public Expression<ValueType> {
+//   ValueToken(const ValueType value): mValue(value) {}
 
 
-  ValueType operator()() const {
-    return mValue;
+//   ValueType operator()() const {
+//     return mValue;
+//   }
+
+// public:
+//   ValueType mValue;
+// };
+
+// template<typename NumberType> struct NumberToken : public ValueToken<NumberType> {
+//   NumberToken(const NumberType value = {})
+//     : ValueToken<NumberType>(value) {}
+// };
+
+// template<typename LeftType, typename RightType, typename ResType> class BinaryExpression: public Expression<ResType>
+// { public:
+//   template<class T1, class T2, class = decltype(LeftT(std::declval<T1&&>()), RightT(std::declval<T2&&>()), void())>
+//   BinaryExpression(Expression<LeftType>&& left = nullptr, Expression<RightType>&& right = nullptr)
+//   : mLeft(std::forward<T1>(left))
+//   , mRight(std::forward<T2>(right)) {}
+
+//   BinaryExpression(Expression<LeftType>* left = nullptr, Expression<RightType>* right = nullptr)
+//   : mLeft(left)
+//   , mRight(right) {}
+
+// public:
+//   Expression<LeftType>* mLeft;
+//   Expression<RightType>* mRight;
+// };
+
+// template<typename LeftType, typename RightType, typename ResType>
+// class lt: public BinaryExpression<LeftType, RightType, ResType> {
+// public:
+//   lt(Expression<LeftType>&& left, Expression<RightType>&& right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+//   lt(Expression<LeftType>* left, Expression<RightType>* right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+
+//   ResType operator()() const {
+//     return (*this->mLeft)() < (*this->mRight)();
+//   }
+// };
+
+// template<typename LeftType, typename RightType, typename ResType>
+// class gt: public BinaryExpression<LeftType, RightType, ResType> {
+// public:
+//   gt(Expression<LeftType>&& left, Expression<RightType>&& right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+//   gt(Expression<LeftType>* left, Expression<RightType>* right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+//   ResType operator()() const {
+//     return (*this->mLeft)() > (*this->mRight)();
+//   }
+// };
+
+// template<typename LeftType, typename RightType, typename ResType>
+// class eq: public BinaryExpression<LeftType, RightType, ResType> {
+// public:
+//   eq(Expression<LeftType>&& left, Expression<RightType>&& right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+
+//   eq(Expression<LeftType>* left, Expression<RightType>* right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+
+//   ResType operator()() const {
+//     return (*this->mLeft)() == (*this->mRight)();
+//   }
+// };
+
+// template<typename LeftType, typename RightType, typename ResType>
+// class OrExpression: public BinaryExpression<LeftType, RightType, ResType> {
+// public:
+//   OrExpression(Expression<LeftType>&& left, Expression<RightType>&& right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+
+//   OrExpression(Expression<LeftType>* left, Expression<RightType>* right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+
+//   ResType operator()() const {
+//     return (*this->mLeft)() || (*this->mRight)();
+//   }
+// };
+
+// template<typename LeftType, typename RightType, typename ResType>
+// class AndExpression: public BinaryExpression<LeftType, RightType, ResType> {
+// public:
+//   AndExpression(Expression<LeftType>&& left, Expression<RightType>&& right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+
+//   AndExpression(Expression<LeftType>* left, Expression<RightType>* right)
+//   : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
+
+//   ResType operator()() const {
+//     return (*this->mLeft)() && (*this->mRight)();
+//   }
+// };
+
+namespace SeriesQuery {
+  template<typename T> class box {
+    // Wrapper over unique_ptr.
+    std::unique_ptr<T> _impl;
+
+  public:
+    // Automatic construction from a `T`, not a `T*`.
+    box(T&& obj): _impl(new T(std::move(obj))) {}
+    box(const T& obj): _impl(new T(obj)) {}
+
+    // Copy constructor copies `T`.
+    box(const box& other): box(*other._impl) {}
+    box& operator=(const box& other) {
+      *_impl = *other._impl;
+      return *this;
+    }
+
+    // unique_ptr destroys `T` for us.
+    ~box() = default;
+
+    // Access propagates constness.
+    T& operator*() {
+      return *_impl;
+    }
+    const T& operator*() const {
+      return *_impl;
+    }
+
+    T* operator->() {
+      return _impl.get();
+    }
+    const T* operator->() const {
+      return _impl.get();
+    }
+  };
+
+  struct LiteralExpr {
+    std::uint64_t value;
+  };
+
+  using Expr = std::variant<LiteralExpr, box<struct EqExpr>, box<struct OrExpr>, box<struct AndExpr>, box<struct GtExpr>, box<struct LtExpr>>;
+
+  struct EqExpr {
+    Expr lhs, rhs;
+  };
+
+  struct OrExpr {
+    Expr lhs, rhs;
+  };
+
+  struct AndExpr {
+    Expr lhs, rhs;
+  };
+
+  struct GtExpr {
+    Expr lhs, rhs;
+  };
+
+  struct LtExpr {
+    Expr lhs, rhs;
+  };
+
+  bool evaluate(const Expr& expr) {
+    struct visitor {
+      std::uint64_t operator()(const LiteralExpr& expr) {
+        return expr.value;
+      }
+
+      std::uint64_t operator()(const box<EqExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs == rhs;
+      }
+
+      std::uint64_t operator()(const box<OrExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs || rhs;
+      }
+
+      std::uint64_t operator()(const box<AndExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs && rhs;
+      }
+
+      std::uint64_t operator()(const box<GtExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs > rhs;
+      }
+      std::uint64_t operator()(const box<LtExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs < rhs;
+      }
+    };
+
+    return std::visit(visitor{}, expr);
   }
 
-public:
-  ValueType mValue;
-};
-
-template<typename NumberType> struct NumberToken : public ValueToken<NumberType> {
-  NumberToken(const NumberType value = {})
-    : ValueToken<NumberType>(value) {}
-};
-
-template<typename LeftType, typename RightType, typename ResType> class OrExpression: public Expression<ResType> {
-public:
-  OrExpression() = default;
-
-  bool operator()() {
-    return (*this->mLeft)() || (*this->mRight)();
-  }
-};
-
-template<typename LeftType, typename RightType, typename ResType> class AndExpression: public Expression<ResType> {
-public:
-  bool operator()() {
-    return (*this->mLeft)() && (*this->mRight)();
-  }
-};
-
-template<typename LeftType, typename RightType, typename ResType> class BinaryExpression: public Expression<ResType> {
-public:
-  template<class T1, class T2, class = decltype(LeftT(std::declval<T1&&>()), RightT(std::declval<T2&&>()), void())>
-  BinaryExpression(Expression<LeftType>&& left = nullptr, Expression<RightType>&& right = nullptr)
-  : mLeft(std::forward<T1>(left))
-  , mRight(std::forward<T2>(right)) {}
-
-  BinaryExpression(Expression<LeftType>* left = nullptr, Expression<RightType>* right = nullptr)
-  : mLeft(left)
-  , mRight(right) {}
-
-public:
-  Expression<LeftType>* mLeft;
-  Expression<RightType>* mRight;
-};
-
-template<typename LeftType, typename RightType, typename ResType>
-class lt: public BinaryExpression<LeftType, RightType, ResType> {
-public:
-  lt(Expression<LeftType>&& left, Expression<RightType>&& right)
-  : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
-  lt(Expression<LeftType>* left, Expression<RightType>* right)
-  : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
-
-  ResType operator()() const {
-    return (*this->mLeft)() < (*this->mRight)();
-  }
-};
-
-template<typename LeftType, typename RightType, typename ResType>
-class gt: public BinaryExpression<LeftType, RightType, ResType> {
-public:
-  gt(Expression<LeftType>&& left, Expression<RightType>&& right)
-  : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
-  gt(Expression<LeftType>* left, Expression<RightType>* right)
-  : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
-  ResType operator()() const {
-    return (*this->mLeft)() > (*this->mRight)();
-  }
-};
-
-template<typename LeftType, typename RightType, typename ResType>
-class eq: public BinaryExpression<LeftType, RightType, ResType> {
-public:
-  eq(Expression<LeftType>&& left, Expression<RightType>&& right)
-  : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
-
-  eq(Expression<LeftType>* left, Expression<RightType>* right)
-  : BinaryExpression<LeftType, RightType, ResType>(left, right) {}
-
-  ResType operator()() const {
-    return (*this->mLeft)() == (*this->mRight)();
-  }
-};
+} // namespace SeriesQuery
 
 #endif // __QUERY
