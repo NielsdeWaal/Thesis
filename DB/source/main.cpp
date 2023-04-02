@@ -1,5 +1,6 @@
 // #include <source/EventLoop/EventLoop.h>
 #include "FileManager.hpp"
+#include "FrogFishTesting.hpp"
 #include "InfluxParser.hpp"
 #include "MemTable.hpp"
 // #include "lexyparser.hpp"
@@ -51,6 +52,7 @@ public:
     // mFiles.reserve(4);
     // func();
     // Writer();
+    mTestingHelper.SetIngesting("../medium-5");
     IngestionTask();
   }
 
@@ -63,7 +65,8 @@ public:
   EventLoop::uio::task<> IngestionTask() {
     // co_await mInputs.ReadFromFile("../medium-plus-1");
     // co_await mInputs.ReadFromFile("../large");
-    co_await mInputs.ReadFromFile("../medium-5");
+    assert(mTestingHelper.IsIngesting());
+    co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
@@ -168,12 +171,24 @@ public:
         }
       } else {
         mIngestionDone = true;
+        std::string queryTarget{
+            "cpu.hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
+            "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
+        auto filter = [](std::uint64_t ts, std::uint64_t val) {
+          using namespace SeriesQuery;
+          return evaluate(Expr(AndExpr{
+              GtExpr{LiteralExpr{ts}, LiteralExpr{1452600980000000000}},
+              GtExpr{LiteralExpr{val}, LiteralExpr{99}}}));
+        };
+        mTestingHelper.SetQuerying(queryTarget, filter);
       }
     }
   }
 
   void OnEventLoopCallback() override {
-    HandleIngestion();
+    if (mTestingHelper.IsIngesting()) {
+      HandleIngestion();
+    }
 
     if (mIOQueue.size() > 0 && mOutstandingIO < maxOutstandingIO && mStarted) {
       // TODO instead of awaitables, these can just be regular uring requests
@@ -233,37 +248,17 @@ public:
           for (EventLoop::DmaBuffer& buf : resultBuffers) {
             DataPoint* points = ( DataPoint* ) buf.GetPtr();
 
-            // Expression<std::uint64_t>* tsToken = new NumberToken<std::uint64_t>(points[0].timestamp);
-            // Expression<std::uint64_t>* tsConst = new NumberToken<std::uint64_t>(1452916200000000000);
-            // Expression<std::uint64_t>* qValue = new NumberToken<std::uint64_t>(99);
-            // for (int i = 0; i < memtableSize; ++i) {
-            // Expression<std::uint64_t>* tsToken = new NumberToken<std::uint64_t>(points[i].value);
-            // // bool filterRes = eq<std::uint64_t, std::uint64_t, bool>(tsToken, tsConst)();
-            // bool filterRes = OrExpression<gt<std::uint64_t, std::uint64_t, bool>, gt<std::uint64_t, std::uint64_t,
-            // bool>, bool>(
-            //     new gt<std::uint64_t, std::uint64_t, bool>(new NumberToken<std::uint64_t>(points[i].value), new
-            //     NumberToken<std::uint64_t>(99)), new gt<std::uint64_t, std::uint64_t, bool>(new
-            //     NumberToken<std::uint64_t>(points[i].timestamp),
-            //        new NumberToken<std::uint64_t>(1452485190000000000)))();
-            // if (filterRes) {
-            //   mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
-            // }
-            // }
             using namespace SeriesQuery;
-            // auto expr = Expr(AndExpr{LiteralExpr{2}, LiteralExpr{3}});
 
             // memtableSize is the size of the buffer when seen as an array of DataPoint's
             for (int i = 0; i < memtableSize; ++i) {
-              // auto qRes = evaluate(Expr(AndExpr{GtExpr{LiteralExpr{points[i].value}, LiteralExpr{99}}, 
-              //                                   GtExpr{LiteralExpr{points[i].timestamp}, LiteralExpr{1452600980000000000}}}));
-              // auto qRes = evaluate(Expr(GtExpr{LiteralExpr{points[i].value}, LiteralExpr{99}}));
-              auto qRes = evaluate(Expr(AndExpr{GtExpr{LiteralExpr{points[i].timestamp}, LiteralExpr{1452600980000000000}}, GtExpr{LiteralExpr{points[i].value}, LiteralExpr{99}}}));
-              // mLogger->info("qRes: {}", qRes);
-              if (qRes) {
+              // auto qRes = evaluate(Expr(AndExpr{
+              //     GtExpr{LiteralExpr{points[i].timestamp}, LiteralExpr{1452600980000000000}},
+              //     GtExpr{LiteralExpr{points[i].value}, LiteralExpr{99}}}));
+              if (mTestingHelper.ExecFilter(points[i].timestamp, points[i].value)) {
                 mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
               }
             }
-            // mLogger->info("res: {}", qRes);
           }
 
           std::erase(mRunningQueries, op);
@@ -382,6 +377,7 @@ private:
   std::unordered_map<std::uint64_t, std::unique_ptr<MetricTree>> mTrees;
 
   std::vector<Query> mRunningQueries;
+  TestingHelper mTestingHelper;
   // std::unordered_map<std::string, std::uint64_t> mIndex;
   // std::uint64_t mIndexCounter{0};
 };
