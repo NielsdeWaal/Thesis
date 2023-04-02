@@ -61,8 +61,9 @@ public:
   }
 
   EventLoop::uio::task<> IngestionTask() {
-    co_await mInputs.ReadFromFile("../medium-plus-1");
+    // co_await mInputs.ReadFromFile("../medium-plus-1");
     // co_await mInputs.ReadFromFile("../large");
+    co_await mInputs.ReadFromFile("../medium-5");
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
@@ -161,12 +162,12 @@ public:
       std::size_t chunkSize{1000};
       auto chunk = mInputs.ReadChunk(chunkSize);
       if (chunk.has_value()) {
-        mLogger->info("Reading chunk of size: {}", chunk->size());
+        // mLogger->info("Reading chunk of size: {}", chunk->size());
         for (const auto& measurement : *chunk) {
           co_await Writer(measurement);
         }
       } else {
-        mDone = true;
+        mIngestionDone = true;
       }
     }
   }
@@ -191,12 +192,71 @@ public:
       // issue operation
     }
 
+    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mIngestionDone == true && !mQueringDone
+        && !mQueryStarted) {
+      mLogger->info("Testing queries");
+
+      std::string queryTarget{"cpu.hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
+                              "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
+      std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
+      assert(targetIndex.has_value());
+      mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
+
+      auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1451606400000000000);
+      // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
+      assert(nodes.has_value());
+
+      std::vector<std::uint64_t> addrs;
+      addrs.reserve(nodes->size());
+      // std::transform(nodes->begin(), nodes->end(), addrs.begin(), [](const TimeRange_t& tr){return tr.ptr;});
+      for (const TimeRange_t& tr : *nodes) {
+        addrs.push_back(tr.ptr);
+      }
+      mLogger->info("Query requires {} reads", addrs.size());
+      mRunningQueries.emplace_back(mEv, mNodeFile.GetFd(), addrs, bufSize);
+
+      mQueryStarted = true;
+    }
+
+    if (!mRunningQueries.empty() && mQueryStarted) {
+      // poll the running queries, set mQueringDone when all have been resolved
+      for (Query& op : mRunningQueries) {
+        if (op) {
+          auto& res = op.GetResult();
+
+          mLogger->info("Query finished for {} blocks", res.size());
+
+          std::vector<EventLoop::DmaBuffer> resultBuffers;
+          std::for_each(res.begin(), res.end(), [&resultBuffers](IOOP& resOp) {
+            resultBuffers.emplace_back(std::move(resOp.buf));
+          });
+          for (EventLoop::DmaBuffer& buf : resultBuffers) {
+            DataPoint* points = ( DataPoint* ) buf.GetPtr();
+
+            // Expression<std::uint64_t>* tsToken = new NumberToken<std::uint64_t>(points[0].timestamp);
+            Expression<std::uint64_t>* tsConst = new NumberToken<std::uint64_t>(1452916200000000000);
+
+            for (int i = 0; i < memtableSize; ++i) {
+              Expression<std::uint64_t>* tsToken = new NumberToken<std::uint64_t>(points[i].timestamp);
+              bool filterRes = eq<std::uint64_t, std::uint64_t, bool>(tsToken, tsConst)();
+              if(filterRes) {
+                mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+              }
+            }
+          }
+
+          std::erase(mRunningQueries, op);
+          mQueringDone = true;
+        }
+      }
+    }
+
     // When done, print time it took
     // TODO, instead of waiting for the queue to be empty, check with mInputs if there is anythin
     // left to be consumed
-    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mDone == true) {
-      auto end = Common::MONOTONIC_CLOCK::Now();
-      auto duration = Common::MONOTONIC_CLOCK::ToNanos(end - mStartTS); // / 100 / 100 / 100;
+    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mQueringDone == true) {
+      auto ingestionEnd = Common::MONOTONIC_CLOCK::Now();
+      auto duration = Common::MONOTONIC_CLOCK::ToNanos(ingestionEnd - mStartTS); // / 100 / 100 / 100;
 
       double timeTakenS = duration / 1000000000.;
       double rateS = mIngestionCounter / timeTakenS;
@@ -286,7 +346,9 @@ private:
   bool mStarted{false};
   std::size_t mFileOffset{0};
   std::size_t mLogOffset{0};
-  bool mDone{false};
+  bool mIngestionDone{false};
+  bool mQueringDone{false};
+  bool mQueryStarted{false};
   // std::vector<AppendOnlyFile> mFiles;
 
   Common::MONOTONIC_TIME mStartTS{};
