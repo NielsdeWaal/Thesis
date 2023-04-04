@@ -52,7 +52,7 @@ public:
     // mFiles.reserve(4);
     // func();
     // Writer();
-    mTestingHelper.SetIngesting("../medium-5");
+    auto _ = mTestingHelper.SetLoadingData("../medium-5");
     IngestionTask();
   }
 
@@ -65,7 +65,7 @@ public:
   EventLoop::uio::task<> IngestionTask() {
     // co_await mInputs.ReadFromFile("../medium-plus-1");
     // co_await mInputs.ReadFromFile("../large");
-    assert(mTestingHelper.IsIngesting());
+    assert(mTestingHelper.IsLoadingData());
     co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
@@ -98,6 +98,8 @@ public:
     mStarted = true;
     // auto start = Common::MONOTONIC_CLOCK::Now();
     mStartTS = Common::MONOTONIC_CLOCK::Now();
+    auto loadingLatency = mTestingHelper.SetIngesting();
+    mLogger->info("Loading data took: {}", loadingLatency);
   }
 
   // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
@@ -170,17 +172,11 @@ public:
           co_await Writer(measurement);
         }
       } else {
+        // Finished with ingestion - switching to query tests
         mIngestionDone = true;
-        std::string queryTarget{
-            "cpu.hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
-            "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
-        auto filter = [](std::uint64_t ts, std::uint64_t val) {
-          using namespace SeriesQuery;
-          return evaluate(Expr(AndExpr{
-              GtExpr{LiteralExpr{ts}, LiteralExpr{1452600980000000000}},
-              GtExpr{LiteralExpr{val}, LiteralExpr{99}}}));
-        };
-        mTestingHelper.SetQuerying(queryTarget, filter);
+        // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
+        mIngestionLatency = mTestingHelper.SetPrepareQuery();
+        mLogger->info("Ingestion took: {}", mIngestionLatency);
       }
     }
   }
@@ -207,8 +203,7 @@ public:
       // issue operation
     }
 
-    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mIngestionDone == true && !mQueringDone
-        && !mQueryStarted) {
+    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mTestingHelper.IsPreparingQuery()) {
       mLogger->info("Testing queries");
 
       std::string queryTarget{"cpu.hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
@@ -227,13 +222,22 @@ public:
       for (const TimeRange_t& tr : *nodes) {
         addrs.push_back(tr.ptr);
       }
-      mLogger->info("Query requires {} reads", addrs.size());
-      mRunningQueries.emplace_back(mEv, mNodeFile.GetFd(), addrs, bufSize);
 
+      mLogger->info("Query requires {} reads, starting...", addrs.size());
+
+      auto filter = [](SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
+        using namespace SeriesQuery;
+        return evaluate(
+            Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1452600980000000000}}, GtExpr{val, SignedLiteralExpr{99}}}));
+      };
+      mTestingHelper.SetQuerying(queryTarget, filter);
+
+      // TODO support multiple starting multiple queries
+      mRunningQueries.emplace_back(mEv, mNodeFile.GetFd(), addrs, bufSize);
       mQueryStarted = true;
     }
 
-    if (!mRunningQueries.empty() && mQueryStarted) {
+    if (!mRunningQueries.empty() && mTestingHelper.IsQuerying()) {
       // poll the running queries, set mQueringDone when all have been resolved
       for (Query& op : mRunningQueries) {
         if (op) {
@@ -252,9 +256,6 @@ public:
 
             // memtableSize is the size of the buffer when seen as an array of DataPoint's
             for (int i = 0; i < memtableSize; ++i) {
-              // auto qRes = evaluate(Expr(AndExpr{
-              //     GtExpr{LiteralExpr{points[i].timestamp}, LiteralExpr{1452600980000000000}},
-              //     GtExpr{LiteralExpr{points[i].value}, LiteralExpr{99}}}));
               if (mTestingHelper.ExecFilter(points[i].timestamp, points[i].value)) {
                 mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
               }
@@ -263,6 +264,7 @@ public:
 
           std::erase(mRunningQueries, op);
           mQueringDone = true;
+          mQueryLatency = mTestingHelper.Finalize();
         }
       }
     }
@@ -271,8 +273,10 @@ public:
     // TODO, instead of waiting for the queue to be empty, check with mInputs if there is anythin
     // left to be consumed
     if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mQueringDone == true) {
-      auto ingestionEnd = Common::MONOTONIC_CLOCK::Now();
-      auto duration = Common::MONOTONIC_CLOCK::ToNanos(ingestionEnd - mStartTS); // / 100 / 100 / 100;
+      // auto ingestionEnd = Common::MONOTONIC_CLOCK::Now();
+      // auto duration = Common::MONOTONIC_CLOCK::ToNanos(ingestionEnd - mStartTS); // / 100 / 100 / 100;
+      mLogger->info("Ingestion took: {}ms, query took: {}ms", mIngestionLatency / 1000000, mQueryLatency / 1000000);
+      auto duration = mIngestionLatency;
 
       double timeTakenS = duration / 1000000000.;
       double rateS = mIngestionCounter / timeTakenS;
@@ -369,6 +373,8 @@ private:
 
   Common::MONOTONIC_TIME mStartTS{};
   Common::MONOTONIC_TIME mEndTS{};
+  std::uint64_t mIngestionLatency{0};
+  std::uint64_t mQueryLatency{0};
 
   InputManager mInputs;
   // TimeTree<64> mTree;

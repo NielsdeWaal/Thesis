@@ -122,11 +122,17 @@ namespace SeriesQuery {
     }
   };
 
-  struct LiteralExpr {
+  struct UnsignedLiteralExpr {
+    UnsignedLiteralExpr(std::uint64_t val) : value(val) {}
     std::uint64_t value;
   };
 
-  using Expr = std::variant<LiteralExpr, box<struct EqExpr>, box<struct OrExpr>, box<struct AndExpr>, box<struct GtExpr>, box<struct LtExpr>>;
+  struct SignedLiteralExpr {
+    SignedLiteralExpr(std::int64_t val) : value(val) {}
+    std::int64_t value;
+  };
+
+  using Expr = std::variant<UnsignedLiteralExpr, SignedLiteralExpr, box<struct EqExpr>, box<struct OrExpr>, box<struct AndExpr>, box<struct GtExpr>, box<struct LtExpr>>;
 
   struct EqExpr {
     Expr lhs, rhs;
@@ -150,7 +156,11 @@ namespace SeriesQuery {
 
   bool evaluate(const Expr& expr) {
     struct visitor {
-      std::uint64_t operator()(const LiteralExpr& expr) {
+      std::uint64_t operator()(const UnsignedLiteralExpr& expr) {
+        return expr.value;
+      }
+
+      std::uint64_t operator()(const SignedLiteralExpr& expr) {
         return expr.value;
       }
 
