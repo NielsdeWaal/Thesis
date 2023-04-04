@@ -7,6 +7,14 @@
 #include "Query.hpp"
 #include "TSC.h"
 
+#include <arrow/array.h>
+#include <arrow/csv/api.h>
+#include <arrow/io/api.h>
+#include <arrow/ipc/api.h>
+#include <arrow/pretty_print.h>
+#include <arrow/result.h>
+#include <arrow/status.h>
+#include <arrow/table.h>
 #include <charconv>
 #include <EventLoop.h>
 #include <File.h>
@@ -52,7 +60,7 @@ public:
     // mFiles.reserve(4);
     // func();
     // Writer();
-    auto _ = mTestingHelper.SetLoadingData("../medium-5");
+    auto _ = mTestingHelper.SetLoadingData("../small-1");
     IngestionTask();
   }
 
@@ -323,8 +331,8 @@ private:
   };
 
   static constexpr std::size_t maxOutstandingIO{48};
-  static constexpr std::size_t bufSize{2097152}; // 2MB
-  // static constexpr std::size_t bufSize{4096}; // 4KB
+  // static constexpr std::size_t bufSize{2097152}; // 2MB
+  static constexpr std::size_t bufSize{4096}; // 4KB
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
   struct MetricTree {
@@ -388,33 +396,59 @@ private:
   // std::uint64_t mIndexCounter{0};
 };
 
-int main() {
-  // auto testing = lexy::zstring_input<lexy::utf8_encoding>("weather,location=us-midwest,foo=bar
-  // temperature=82i,humidity=14.0 1465839830100400200"); assert(lexy::match<grammar::InfluxMessage>(testing) == true);
-  // auto res = lexy::parse<grammar::InfluxMessage>(testing, lexy_ext::report_error);
-  // auto file = lexy::read_file<lexy::utf8_encoding>("../small-1");
-  // { … }
+arrow::Status RunArrow() {
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open("../small-5.arrow", arrow::default_memory_pool()));
+  ARROW_ASSIGN_OR_RAISE(auto ipc_reader, arrow::ipc::RecordBatchFileReader::Open(infile));
+  auto schema = ipc_reader->schema();
+  int num_row_groups = ipc_reader->num_record_batches();
 
-  // auto result = lexy::parse<grammar::InfluxMessage>(file.buffer(), lexy_ext::report_error.path("../small-5"));
-  // auto result = lexy::parse<grammer::production>();
-  // if (result.has_value()) {
-  //   auto res = result.value();
-  //   fmt::print("{}", res.size());
-  // IMessage& m = res.front();
-  // InfluxMValue val = std::get<InfluxMValue>(m.measurements.front().value);
-  // std::int64_t intVal = std::get<std::int64_t>(val.value);
-  // fmt::print("read: {}\n", intVal);
-  // for (const IMessage& msg : res) {
-  //   fmt::print("name: {}\n", msg.name);
-  //   for (auto& [k, v] : msg.tags) {
-  //     fmt::print("tags: {} - {}\n", k, v);
-  //   }
-  //   for (auto& [k, v] : msg.measurements) {
-  //     fmt::print("measurements: {} - {}\n", k, v);
-  //   }
-  //   fmt::print("ts: {}\n", msg.ts);
+  // Loop over the row groups and read them in chunks
+  for (int rg = 0; rg < num_row_groups; rg++) {
+    std::shared_ptr<arrow::RecordBatch> batch;
+    ARROW_ASSIGN_OR_RAISE(batch, ipc_reader->ReadRecordBatch(rg));
+
+    // Get the column of strings
+    auto str_col = batch->column(0);
+
+    // Loop over the chunks of the column
+    int num_chunks = str_col->data()->num_chunks();
+    for (int chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
+      auto chunk = str_col->chunk(chunk_idx);
+      auto str_array = std::static_pointer_cast<arrow::StringArray>(chunk);
+
+      // Loop over the strings in the chunk
+      int64_t num_strings = str_array->length();
+      for (int64_t i = 0; i < num_strings; i++) {
+        std::cout << str_array->GetString(i) << std::endl;
+      }
+    }
+    }
+  // std::shared_ptr<arrow::RecordBatch> rbatch;
+  // ARROW_ASSIGN_OR_RAISE(rbatch, ipc_reader->ReadRecordBatch(0));
+  // auto tab = rbatch->column(0);
+  // std::cout << rbatch->ToString() << std::endl;
+  // auto vec = rbatch->columns();
+  // for(const std::string& line : *lines) {
+  // auto arrowStrArr = std::static_pointer_cast<arrow::StringArray>(vec[0]);
+  // for(const auto& arr : vec) {
+  //   // for(const auto& line : *arr) {
+  //     std::cout << (*arr)[0] << std::endl;
+  //   // }
   // }
+  //   std::cout << line << std::endl;
   // }
+  // std::vector<IMessage> rekhs = lexy::
+
+  return arrow::Status::OK();
+}
+
+int main() {
+  auto st = RunArrow();
+  if (!st.ok()) {
+    std::cerr << st << std::endl;
+    return 1;
+  }
 
   EventLoop::EventLoop loop;
   loop.LoadConfig("FrogFish.toml");

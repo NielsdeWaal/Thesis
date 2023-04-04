@@ -21,7 +21,8 @@ target_link_libraries(FrogFish
   TimeTree
   spdlog
   fmt
-  foonathan::lexy)
+  foonathan::lexy
+  arrow)
 
 # add_dependencies(FrogFish
 #   CommonLibs)

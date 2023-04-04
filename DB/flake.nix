@@ -45,6 +45,9 @@
         # Development time dependencies
         catch2
 
+        # FrogFish dependencies
+        arrow-cpp
+
         # CommonLibs requirements
         spdlog
         openssl_1_1
