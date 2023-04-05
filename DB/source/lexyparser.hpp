@@ -167,7 +167,7 @@ namespace grammar {
     static constexpr auto rule = [] {
       auto item = dsl::p<name> + dsl::lit_c<','> + dsl::p<tags> + dsl::lit_c<' '> + dsl::p<measurements>
                   + dsl::lit_c<' '> + dsl::p<timestamp> + dsl::eol;
-      auto terminator = dsl::terminator(dsl::eof);
+      auto terminator = dsl::terminator(dsl::lit_c<';'>);
       return terminator.list(item);
     }();
 

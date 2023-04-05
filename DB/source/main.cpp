@@ -60,7 +60,7 @@ public:
     // mFiles.reserve(4);
     // func();
     // Writer();
-    auto _ = mTestingHelper.SetLoadingData("../small-1");
+    auto _ = mTestingHelper.SetLoadingData("../small-1.arrow");
     IngestionTask();
   }
 
@@ -74,10 +74,13 @@ public:
     // co_await mInputs.ReadFromFile("../medium-plus-1");
     // co_await mInputs.ReadFromFile("../large");
     assert(mTestingHelper.IsLoadingData());
-    co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
+    // co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
+    mInputs.ReadFromArrowFile(mTestingHelper.GetFilename());
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
+
+    mLogger->info("Opened files, logs: {}, nodes: {}", mLogFile.GetFd(), mNodeFile.GetFd());
 
     if (mLogFile.FileSize() > 0) {
       mLogger->info("Found existing log file, recreating indexing structures");
@@ -112,6 +115,7 @@ public:
 
   // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
   EventLoop::uio::task<> Writer(const IMessage& msg) {
+    // mLogger->info("Writing for {} measurements", msg.measurements.size());
     for (const InfluxKV& measurement : msg.measurements) {
       if (!mTrees.contains(measurement.index)) {
         mLogger->info("Creating structures for new series");
@@ -173,7 +177,8 @@ public:
   EventLoop::uio::task<> HandleIngestion() {
     if (mStarted) {
       std::size_t chunkSize{1000};
-      auto chunk = mInputs.ReadChunk(chunkSize);
+      auto chunk = co_await mInputs.ReadArrowChunk();
+      // std::optional<std::vector<IMessage>> chunk = co_await mInputs.ReadArrowChunk();
       if (chunk.has_value()) {
         // mLogger->info("Reading chunk of size: {}", chunk->size());
         for (const auto& measurement : *chunk) {
@@ -214,13 +219,12 @@ public:
     if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mTestingHelper.IsPreparingQuery()) {
       mLogger->info("Testing queries");
 
-      std::string queryTarget{"cpu.hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
-                              "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
+      std::string queryTarget{"cpu.hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
       std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
       assert(targetIndex.has_value());
       mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
 
-      auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1451606400000000000);
+      auto nodes = mTrees[*targetIndex]->tree.Query(1451606760000000000, 1451611710000000000);
       // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
       assert(nodes.has_value());
 
@@ -236,7 +240,7 @@ public:
       auto filter = [](SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
         using namespace SeriesQuery;
         return evaluate(
-            Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1452600980000000000}}, GtExpr{val, SignedLiteralExpr{99}}}));
+            Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1451606760000000000}}, GtExpr{val, SignedLiteralExpr{50}}}));
       };
       mTestingHelper.SetQuerying(queryTarget, filter);
 
@@ -396,34 +400,29 @@ private:
   // std::uint64_t mIndexCounter{0};
 };
 
-arrow::Status RunArrow() {
-  std::shared_ptr<arrow::io::ReadableFile> infile;
-  ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open("../small-5.arrow", arrow::default_memory_pool()));
-  ARROW_ASSIGN_OR_RAISE(auto ipc_reader, arrow::ipc::RecordBatchFileReader::Open(infile));
-  auto schema = ipc_reader->schema();
-  int num_row_groups = ipc_reader->num_record_batches();
+// arrow::Status RunArrow() {
 
-  // Loop over the row groups and read them in chunks
-  for (int rg = 0; rg < num_row_groups; rg++) {
-    std::shared_ptr<arrow::RecordBatch> batch;
-    ARROW_ASSIGN_OR_RAISE(batch, ipc_reader->ReadRecordBatch(rg));
+//   // Loop over the row groups and read them in chunks
+//   for (int rg = 0; rg < num_row_groups; rg++) {
 
-    // Get the column of strings
-    auto str_col = batch->column(0);
+//     std::cout << result.value().size() << std::endl;
+    // for(const IMessage& msg : result.value()) {
+    //   std::cout << msg.name << std::endl;
+    // }
 
     // Loop over the chunks of the column
-    int num_chunks = str_col->data()->num_chunks();
-    for (int chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
-      auto chunk = str_col->chunk(chunk_idx);
-      auto str_array = std::static_pointer_cast<arrow::StringArray>(chunk);
+    // int num_chunks = str_col->data()->num_chunks();
+    // for (int chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
+    //   auto chunk = str_col->chunk(chunk_idx);
+    //   auto str_array = std::static_pointer_cast<arrow::StringArray>(chunk);
 
-      // Loop over the strings in the chunk
-      int64_t num_strings = str_array->length();
-      for (int64_t i = 0; i < num_strings; i++) {
-        std::cout << str_array->GetString(i) << std::endl;
-      }
-    }
-    }
+    //   // Loop over the strings in the chunk
+    //   int64_t num_strings = str_array->length();
+    //   for (int64_t i = 0; i < num_strings; i++) {
+    //     std::cout << str_array->GetString(i) << std::endl;
+    //   }
+    // }
+  // }
   // std::shared_ptr<arrow::RecordBatch> rbatch;
   // ARROW_ASSIGN_OR_RAISE(rbatch, ipc_reader->ReadRecordBatch(0));
   // auto tab = rbatch->column(0);
@@ -440,15 +439,15 @@ arrow::Status RunArrow() {
   // }
   // std::vector<IMessage> rekhs = lexy::
 
-  return arrow::Status::OK();
-}
+//   return arrow::Status::OK();
+// }
 
 int main() {
-  auto st = RunArrow();
-  if (!st.ok()) {
-    std::cerr << st << std::endl;
-    return 1;
-  }
+  // auto st = RunArrow();
+  // if (!st.ok()) {
+  //   std::cerr << st << std::endl;
+  //   return 1;
+  // }
 
   EventLoop::EventLoop loop;
   loop.LoadConfig("FrogFish.toml");

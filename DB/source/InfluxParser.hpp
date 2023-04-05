@@ -4,6 +4,14 @@
 #include "lexyparser.hpp"
 #include "SeriesIndex.hpp"
 
+#include <arrow/array.h>
+#include <arrow/csv/api.h>
+#include <arrow/io/api.h>
+#include <arrow/ipc/api.h>
+#include <arrow/pretty_print.h>
+#include <arrow/result.h>
+#include <arrow/status.h>
+#include <arrow/table.h>
 #include <cstring>
 #include <fmt/core.h>
 #include <fmt/format.h>
@@ -15,6 +23,7 @@
 #include <optional>
 #include <span>
 #include <spdlog/logger.h>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -126,7 +135,7 @@ public:
 
   EventLoop::uio::task<> ReadFromFile(const std::string& filename) {
     co_await mIndex.SetupFiles();
-    
+
     auto file = lexy::read_file<lexy::utf8_encoding>(filename.c_str());
     auto result = lexy::parse<grammar::InfluxMessage>(file.buffer(), lexy_ext::report_error.path(filename.c_str()));
     if (!result.has_value()) {
@@ -144,7 +153,7 @@ public:
         });
         name.append(kv.name);
         // std::string name = fmt::format("{}.{}.{}", msg.name, fmt::join());
-        if(auto index = mIndex.GetIndex(name); index.has_value()) {
+        if (auto index = mIndex.GetIndex(name); index.has_value()) {
           kv.index = index.value();
         } else {
           // mLogger->info("New series for {}, assigning id: {}", name, mIndexCounter);
@@ -161,7 +170,101 @@ public:
         // }
       }
     }
-    
+  }
+
+  EventLoop::uio::task<> ReadFromArrowFile(const std::string& filename) {
+    co_await mIndex.SetupFiles();
+    mLogger->info("Reading {}", filename);
+    // ARROW_ASSIGN_OR_RAISE(infile, arrow::io::ReadableFile::Open(filename, arrow::default_memory_pool()));
+    // ARROW_ASSIGN_OR_RAISE(mFileReader, arrow::ipc::RecordBatchFileReader::Open(infile));
+    {
+      auto res = arrow::io::ReadableFile::Open(filename, arrow::default_memory_pool());
+      assert(res.ok());
+      infile = res.ValueOrDie();
+    }
+    {
+      auto res = arrow::ipc::RecordBatchFileReader::Open(infile);
+      assert(res.ok());
+      mFileReader = res.ValueOrDie();
+      auto schema = mFileReader->schema();
+    }
+    mNumRowGroups = mFileReader->num_record_batches();
+  }
+
+  EventLoop::uio::task<std::optional<std::span<IMessage>>> ReadArrowChunk() {
+    if (mRowGroupIndex == mNumRowGroups) {
+      mLogger->warn("Reached end of input file");
+      co_return std::nullopt;
+    }
+    mMessages.clear();
+    std::shared_ptr<arrow::RecordBatch> batch;
+    // ARROW_ASSIGN_OR_RAISE(batch, mFileReader->ReadRecordBatch(mReaderOffset));
+    {
+      auto res = mFileReader->ReadRecordBatch(mReaderOffset);
+      if (res.ok()) {
+        batch = res.ValueOrDie();
+      } else {
+        mLogger->critical("Failed to read arrow chunk: {}", res.status().ToString());
+        exit(1);
+        // throw std::runtime_error(res.status().ToString());
+      }
+    }
+
+    auto str_col = batch->column(0);
+    const auto str_arr = std::static_pointer_cast<arrow::StringArray>(str_col);
+    auto data = str_arr->value_data();
+    std::string ingestData = data->ToString() + ";";
+    // mLogger->warn("{}", ingestData);
+
+    // auto input = lexy::string_input<lexy::utf8_encoding>(( const char* ) data->data(), data->size());
+    // auto input = lexy::string_input<lexy::utf8_encoding>(ingestData);
+    auto result = lexy::parse<grammar::InfluxMessage>(lexy::string_input<lexy::utf8_encoding>(ingestData), lexy_ext::report_error);
+    if (!result.has_value()) {
+      mLogger->critical("Failed to parse chunk");
+      throw std::runtime_error("Failed to parse chunk");
+    }
+
+    mRowGroupIndex += 1;
+    mMessages = result.value();
+    mLogger->info("Read arrow chunk of size: {} Results: {}, tags: {}, values: {}", str_arr->length(), mMessages.at(0).name, mMessages.at(0).tags.size(), mMessages.at(0).measurements.size());
+    for(IMessage& msg : mMessages) {
+      for(InfluxKV& kv : msg.measurements) {
+        std::string name = msg.name + ".";
+        std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag) {
+          name.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");
+        });
+        name.append(kv.name);
+        auto index = mIndex.GetIndex(name);
+        if(!index.has_value()) {
+          mLogger->warn("inserting {}", name);
+          kv.index = mIndex.InsertSeries(name);
+          // co_await mIndex.AddSeries(name);
+        } else {
+          kv.index = index.value();
+        }
+      }
+    }
+    // exit(1);
+
+    // for (IMessage& msg : mMessages) {
+    //   for (InfluxKV& kv : msg.measurements) {
+    //     std::string name = msg.name + ".";
+    //     std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag) {
+    //       name.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");
+    //     });
+    //     name.append(kv.name);
+    //     // mLogger->info("Read measurement for: {}", name);
+    //     // std::string name = fmt::format("{}.{}.{}", msg.name, fmt::join());
+    //     if (auto index = mIndex.GetIndex(name); index.has_value()) {
+    //       kv.index = index.value();
+    //     } else {
+    //       // mLogger->info("New series for {}, assigning id: {}", name, mIndexCounter);
+    //       kv.index = co_await mIndex.AddSeries(name);
+    //     }
+    //   }
+    // }
+
+    co_return std::span(mMessages.begin(), mMessages.end());
   }
 
   // std::optional<std::span<InfluxMessage>> ReadChunk(std::size_t length) {
@@ -201,8 +304,15 @@ private:
   // std::vector<InfluxMessage> mMessages;
   std::vector<IMessage> mMessages;
   // std::unordered_map<std::string, std::uint64_t> mIndex{};
+
+  // Arrow related parameters
   std::uint64_t mIndexCounter{0};
   std::size_t mReaderOffset{0};
+
+  std::shared_ptr<arrow::ipc::RecordBatchFileReader> mFileReader;
+  std::shared_ptr<arrow::io::ReadableFile> infile;
+  int mNumRowGroups{0};
+  int mRowGroupIndex{0};
 
   Index mIndex;
 
