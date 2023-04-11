@@ -1,6 +1,7 @@
 #ifndef __INFLUX_PARSER
 #define __INFLUX_PARSER
 
+#include "IngestionProtocol/proto.capnp.h"
 #include "lexyparser.hpp"
 #include "SeriesIndex.hpp"
 
@@ -12,6 +13,7 @@
 #include <arrow/result.h>
 #include <arrow/status.h>
 #include <arrow/table.h>
+#include <capnp/serialize.h>
 #include <cstring>
 #include <fmt/core.h>
 #include <fmt/format.h>
@@ -25,6 +27,7 @@
 #include <spdlog/logger.h>
 #include <stdexcept>
 #include <string>
+#include <sys/mman.h>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -116,6 +119,7 @@ public:
   InputManager() = default;
   InputManager(EventLoop::EventLoop& ev): /*mParser(filename),*/ mIndex(ev) {
     mLogger = ev.RegisterLogger("InputManager");
+    mSeriesName.reserve(255);
     // ReadFromFile(filename);
     // mMessages.reserve(2000000);
     // mParser.ParseAll(mMessages);
@@ -147,17 +151,17 @@ public:
       for (InfluxKV& kv : msg.measurements) {
         auto& val = std::get<InfluxMValue>(kv.value);
         // std::string name{msg.name + "." + kv.name};
-        std::string name = msg.name + ".";
-        std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag) {
-          name.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");
-        });
-        name.append(kv.name);
+        // std::string name = msg.name + ".";
+        // std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag) {
+        //   name.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");
+        // });
+        // name.append(kv.name);
         // std::string name = fmt::format("{}.{}.{}", msg.name, fmt::join());
-        if (auto index = mIndex.GetIndex(name); index.has_value()) {
+        if (auto index = mIndex.GetIndex(msg.name); index.has_value()) {
           kv.index = index.value();
         } else {
           // mLogger->info("New series for {}, assigning id: {}", name, mIndexCounter);
-          kv.index = co_await mIndex.AddSeries(name);
+          kv.index = co_await mIndex.AddSeries(msg.name);
         }
         // if (!mIndex.contains(name)) {
         //   mIndex[name] = mIndexCounter;
@@ -191,6 +195,52 @@ public:
     mNumRowGroups = mFileReader->num_record_batches();
   }
 
+  EventLoop::uio::task<> ReadFromCapnpFile(const std::string& filename) {
+    co_await mIndex.SetupFiles();
+
+    int fd = open(filename.c_str(), O_RDONLY);
+    mCapWrapper = std::make_unique<CapnpWrapper>(fd);
+    // mCapReader = ::capnp::StreamFdMessageReader(mCapFd);
+
+    // struct stat s;
+    // int status = fstat(mCapFd, &s);
+    // std::size_t size = s.st_size;
+
+    // char* f = (char*) ::mmap(0, size, PROT_READ, MAP_PRIVATE, mCapFd, 0);
+    // mCapReader = ::capnp::FlatArrayMessageReader(f);
+  }
+
+  // EventLoop::uio::task<proto::Batch::Message::Reader> ReadCapChunk(std::size_t length) {
+  //   // auto res = std::span<proto::Batch::Message>(
+  //   //     mCapWrapper->mCapBatch.begin() + mCapWrapper->mCapOffset,
+  //   //     mCapWrapper->mCapOffset + length <= mCapWrapper->mCapReaderSize ? length : 0U);
+  //   // if (res.empty()) {
+  //   //   co_return std::nullopt;
+  //   // }
+
+  //   auto res = mCapWrapper->mCapBatch.begin() + mCapWrapper->mCapOffset;
+  //   mCapWrapper->mCapOffset += length;
+
+  //   co_return res;
+  // }
+
+  // capnp::List<proto::Batch::Message, capnp::Kind::STRUCT>::Reader GetCapReader() {
+  std::optional<kj::ArrayPtr<capnp::word>> GetCapReader() {
+    // return mCapWrapper->mCapBatch;
+    // capnp::FlatArrayMessageReader message(mCapWrapper->words);
+    // proto::Batch::Reader chunk = message.getRoot<proto::Batch>();
+    // capnp::word* end = const_cast<capnp::word*>(message.getEnd());
+    // mCapWrapper->words = kj::arrayPtr(end, mCapWrapper->words.end());
+    // return chunk;
+    auto words = mCapWrapper->words;
+    // capnp::word* end = const_cast<capnp::word*>(message.getEnd());
+    return words;
+  }
+
+  void PushCapOffset(capnp::word* end) {
+    mCapWrapper->words = kj::arrayPtr(end, mCapWrapper->words.end());
+  }
+
   EventLoop::uio::task<std::optional<std::span<IMessage>>> ReadArrowChunk() {
     if (mRowGroupIndex == mNumRowGroups) {
       mLogger->warn("Reached end of input file");
@@ -213,35 +263,41 @@ public:
     auto str_col = batch->column(0);
     const auto str_arr = std::static_pointer_cast<arrow::StringArray>(str_col);
     auto data = str_arr->value_data();
-    std::string ingestData = data->ToString() + ";";
+    // std::string ingestData = data->ToString();
     // mLogger->warn("{}", ingestData);
 
-    // auto input = lexy::string_input<lexy::utf8_encoding>(( const char* ) data->data(), data->size());
+    auto input = lexy::string_input<lexy::utf8_encoding>(( const char* ) data->data(), data->size());
     // auto input = lexy::string_input<lexy::utf8_encoding>(ingestData);
-    auto result = lexy::parse<grammar::InfluxMessage>(lexy::string_input<lexy::utf8_encoding>(ingestData), lexy_ext::report_error);
+    // auto result = lexy::parse<grammar::InfluxMessage>(lexy::string_input<lexy::utf8_encoding>(ingestData),
+    // lexy_ext::report_error);
+    auto result = lexy::parse<grammar::InfluxMessage>(input, lexy_ext::report_error);
     if (!result.has_value()) {
       mLogger->critical("Failed to parse chunk");
       throw std::runtime_error("Failed to parse chunk");
     }
 
+    // std::string name;
+    // name.reserve(100);
     mRowGroupIndex += 1;
     mMessages = result.value();
-    mLogger->info("Read arrow chunk of size: {} Results: {}, tags: {}, values: {}", str_arr->length(), mMessages.at(0).name, mMessages.at(0).tags.size(), mMessages.at(0).measurements.size());
-    for(IMessage& msg : mMessages) {
-      for(InfluxKV& kv : msg.measurements) {
-        std::string name = msg.name + ".";
-        std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag) {
-          name.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");
-        });
-        name.append(kv.name);
-        auto index = mIndex.GetIndex(name);
-        if(!index.has_value()) {
-          mLogger->warn("inserting {}", name);
-          kv.index = mIndex.InsertSeries(name);
-          // co_await mIndex.AddSeries(name);
+    // mLogger->info("Read arrow chunk of size: {} Results: {}, tags: {}, values: {}", str_arr->length(),
+    // mMessages.at(0).name, mMessages.at(0).tags.size(), mMessages.at(0).measurements.size());
+    for (IMessage& msg : mMessages) {
+      for (InfluxKV& kv : msg.measurements) {
+        // mSeriesName = msg.name+ ".";
+        // std::for_each(msg.tags.begin(), msg.tags.end(), [&](InfluxKV& tag) {
+        //   mSeriesName.append(tag.name + "=" + std::get<std::string>(tag.value) + ",");
+        // });
+        // mSeriesName.append(kv.name);
+        auto index = mIndex.GetIndex(msg.name + kv.name);
+        if (!index.has_value()) {
+          mLogger->warn("inserting {}", msg.name + kv.name);
+          kv.index = mIndex.InsertSeries(msg.name + kv.name);
+          // co_await mIndex.AddSeries(mSeriesName);
         } else {
           kv.index = index.value();
         }
+        mSeriesName.clear();
       }
     }
     // exit(1);
@@ -295,24 +351,75 @@ public:
     return mIndex.GetIndex(name);
   }
 
+  std::uint64_t InsertSeries(const std::string& name) {
+    // int index = co_await mIndex.InsertSeries(name);
+    // co_return index;
+    return mIndex.InsertSeries(name);
+  }
+
   // std::unordered_map<std::string, std::uint64_t>& GetMapping() {
 
   // }
 
 private:
+  struct CapnpWrapper {
+    CapnpWrapper(int fd) {
+      struct stat stats;
+      ::fstat(fd, &stats);
+      std::size_t size = stats.st_size;
+      void* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+      if(data == MAP_FAILED) {
+        spdlog::critical("Failed to mmap");
+      }
+      ::madvise(data, size, MADV_SEQUENTIAL);
+
+      words = kj::ArrayPtr<capnp::word>(reinterpret_cast<capnp::word*>(data), size / sizeof(capnp::word));
+    }
+
+    kj::ArrayPtr<capnp::word> words;
+    // CapnpWrapper(int fd)
+    // : mCapFd(fd)
+    // , mCapReader(fd)
+    // , mCapRoot(mCapReader.getRoot<proto::Batch>())
+    // , mCapBatch(mCapReader.getRoot<proto::Batch>().getRecordings())
+    // , mCapReaderSize(mCapBatch.size()) 
+    // , mInputStream(mCapRoot) {
+    //   // mCapReader = ::capnp::StreamFdMessageReader(fd);
+    //   // mCapBatch = mCapReader.getRoot<proto::Batch>();
+    //   // mCapBatch = mCap
+    //   // mCapMsgReader = proto::Batch::Message::Reader(mCapBatch.getRecordings());
+    // }
+    // int mCapFd{0};
+    // // ::capnp::FlatArrayMessageReader mCapReader;
+    // ::capnp::StreamFdMessageReader mCapReader;
+    // // ::capnp::List<::proto::Batch::Message, ::capnp::Kind::STRUCT>::Builder mCapBatch;
+    // // proto::Batch::Message::Reader mCapBatch;
+    // ::capnp::List<proto::Batch::Message, capnp::Kind::STRUCT>::Reader mCapBatch;
+    // proto::Batch::Reader mCapRoot;
+    // int mCapOffset{0};
+    // std::size_t mCapReaderSize{0};
+    // ::capnp::InputStreamMessageReader mInputStream;
+    // ::capnp::List<proto::Batch::Message> mCapBatch;
+    // proto::Batch::Message::Reader mCapMsgReader;
+  };
   // InfluxParser mParser;
   // std::vector<InfluxMessage> mMessages;
   std::vector<IMessage> mMessages;
   // std::unordered_map<std::string, std::uint64_t> mIndex{};
 
-  // Arrow related parameters
   std::uint64_t mIndexCounter{0};
   std::size_t mReaderOffset{0};
 
+  // Arrow related parameters
   std::shared_ptr<arrow::ipc::RecordBatchFileReader> mFileReader;
   std::shared_ptr<arrow::io::ReadableFile> infile;
   int mNumRowGroups{0};
   int mRowGroupIndex{0};
+
+  // capnp related parameters
+  std::unique_ptr<CapnpWrapper> mCapWrapper;
+
+  std::string mSeriesName{};
 
   Index mIndex;
 
