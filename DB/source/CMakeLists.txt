@@ -19,6 +19,7 @@ add_executable(FrogFish
   lexy_user_config.hpp
   SeriesIndex.hpp
 
+  robin_hood.h
   IngestionProtocol/proto.capnp.h
   FrogFishTesting.hpp)
 
@@ -27,6 +28,7 @@ target_link_libraries(FrogFish
   EventLoop
   Common
   TimeTree
+
   spdlog
   fmt
   foonathan::lexy

@@ -186,6 +186,8 @@ public:
   EventLoop::uio::task<> HandleCapnpIngestion() {
     if (mStarted) {
       auto batch = mInputs.GetCapReader();
+      std::string name;
+      name.reserve(255);
       if (batch.has_value()) {
         if(batch.value().size() == 0) {
           mIngestionDone = true;
@@ -197,8 +199,7 @@ public:
         capnp::FlatArrayMessageReader message(batch.value());
         proto::Batch::Reader chunk = message.getRoot<proto::Batch>();
         for (const proto::Batch::Message::Reader msg : chunk.getRecordings()) {
-          std::string name{msg.getMetric()};
-          name.reserve(255);
+          name = msg.getMetric();
           name.append(",");
           auto tags = msg.getTags();
           std::for_each(tags.begin(), tags.end(), [&](proto::Batch::Message::Tag::Reader tag) {
@@ -252,6 +253,7 @@ public:
             name.resize(name.size() - measurement.getName().size());
           }
         }
+        name.clear();
         mInputs.PushCapOffset(const_cast<capnp::word*>(message.getEnd()));
       }
     }
