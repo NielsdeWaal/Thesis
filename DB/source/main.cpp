@@ -4,6 +4,7 @@
 #include "InfluxParser.hpp"
 #include "MemTable.hpp"
 // #include "lexyparser.hpp"
+#include "IngestionProtocol/proto.capnp.h"
 #include "Query.hpp"
 #include "TSC.h"
 
@@ -15,6 +16,8 @@
 #include <arrow/result.h>
 #include <arrow/status.h>
 #include <arrow/table.h>
+#include <capnp/message.h>
+#include <capnp/serialize.h>
 #include <charconv>
 #include <EventLoop.h>
 #include <File.h>
@@ -60,7 +63,10 @@ public:
     // mFiles.reserve(4);
     // func();
     // Writer();
-    auto _ = mTestingHelper.SetLoadingData("../small-1.arrow");
+    // auto _ = mTestingHelper.SetLoadingData("../large.arrow");
+    // auto _ = mTestingHelper.SetLoadingData("../small-1.capfile");
+    auto _ = mTestingHelper.SetLoadingData("../large-5.capfile");
+    // auto _ = mTestingHelper.SetLoadingData("../large.capfile");
     IngestionTask();
   }
 
@@ -75,7 +81,8 @@ public:
     // co_await mInputs.ReadFromFile("../large");
     assert(mTestingHelper.IsLoadingData());
     // co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
-    mInputs.ReadFromArrowFile(mTestingHelper.GetFilename());
+    // mInputs.ReadFromArrowFile(mTestingHelper.GetFilename());
+    mInputs.ReadFromCapnpFile(mTestingHelper.GetFilename());
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
@@ -115,7 +122,9 @@ public:
 
   // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
   EventLoop::uio::task<> Writer(const IMessage& msg) {
+    // EventLoop::uio::task<> Writer(const proto::Batch::Message& msg) {
     // mLogger->info("Writing for {} measurements", msg.measurements.size());
+    // mLogger->info("Ingesting {}", msg.getMetric());
     for (const InfluxKV& measurement : msg.measurements) {
       if (!mTrees.contains(measurement.index)) {
         mLogger->info("Creating structures for new series");
@@ -174,14 +183,91 @@ public:
     co_return;
   }
 
+  EventLoop::uio::task<> HandleCapnpIngestion() {
+    if (mStarted) {
+      auto batch = mInputs.GetCapReader();
+      if (batch.has_value()) {
+        if(batch.value().size() == 0) {
+          mIngestionDone = true;
+          // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
+          mIngestionLatency = mTestingHelper.SetPrepareQuery();
+          mLogger->info("Ingestion took: {}", mIngestionLatency);
+          co_return;
+        }
+        capnp::FlatArrayMessageReader message(batch.value());
+        proto::Batch::Reader chunk = message.getRoot<proto::Batch>();
+        for (const proto::Batch::Message::Reader msg : chunk.getRecordings()) {
+          std::string name{msg.getMetric()};
+          name.reserve(255);
+          name.append(",");
+          auto tags = msg.getTags();
+          std::for_each(tags.begin(), tags.end(), [&](proto::Batch::Message::Tag::Reader tag) {
+            name.append(std::string{tag.getName().cStr()} + "=" + tag.getValue().cStr() + ",");
+          });
+          for (const proto::Batch::Message::Measurement::Reader measurement : msg.getMeasurements()) {
+            name.append(measurement.getName());
+            int index{0};
+            if (auto nameIndex = mInputs.GetIndex(name); nameIndex.has_value()) {
+              index = nameIndex.value();
+            } else {
+              index = mInputs.InsertSeries(name);
+            }
+
+            if (!mTrees.contains(index)) {
+              mLogger->info("Creating structures for new series");
+              mTrees[index] = std::make_unique<MetricTree>(mEv);
+            }
+            auto& db = mTrees[index];
+            db->memtable.Insert(msg.getTimestamp(), measurement.getValue());
+            // mLogger->info("Ingesting: {}, ts: {}, value: {}", name, msg.getTimestamp() , measurement.getValue());
+            if (db->memtable.IsFull()) {
+              auto [startTS, endTS] = db->memtable.GetTimeRange();
+              db->memtable.Flush(db->flushBuf);
+              mIOQueue.push_back(WriteOperation{.buf = db->flushBuf, .pos = mFileOffset, .type = File::NODE_FILE});
+
+              db->tree.Insert(startTS, endTS, mFileOffset);
+
+              mLogger->info(
+                  "Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}",
+                  name,
+                  index,
+                  startTS,
+                  endTS,
+                  mFileOffset);
+
+              LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
+              log->start = startTS;
+              log->end = endTS;
+              log->offset = mFileOffset;
+              log->index = index;
+              // co_await mLogFile.WriteAt(logBuf, logOffset);
+              mIOQueue.push_back(WriteOperation{.buf = db->logBuf, .pos = mLogOffset, .type = File::LOG_FILE});
+
+              mFileOffset += bufSize;
+              mLogOffset += 512;
+              db->ctr = 0;
+            }
+            ++mIngestionCounter;
+
+            name.resize(name.size() - measurement.getName().size());
+          }
+        }
+        mInputs.PushCapOffset(const_cast<capnp::word*>(message.getEnd()));
+      }
+    }
+    co_return;
+  }
+
   EventLoop::uio::task<> HandleIngestion() {
     if (mStarted) {
       std::size_t chunkSize{1000};
       auto chunk = co_await mInputs.ReadArrowChunk();
+      // auto& chunk = co_await mInputs.ReadCapChunk(chunkSize);
       // std::optional<std::vector<IMessage>> chunk = co_await mInputs.ReadArrowChunk();
       if (chunk.has_value()) {
         // mLogger->info("Reading chunk of size: {}", chunk->size());
         for (const auto& measurement : *chunk) {
+          // for (const auto& measurement : chunk) {
           co_await Writer(measurement);
         }
       } else {
@@ -196,7 +282,8 @@ public:
 
   void OnEventLoopCallback() override {
     if (mTestingHelper.IsIngesting()) {
-      HandleIngestion();
+      // HandleIngestion();
+      HandleCapnpIngestion();
     }
 
     if (mIOQueue.size() > 0 && mOutstandingIO < maxOutstandingIO && mStarted) {
@@ -219,12 +306,16 @@ public:
     if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mTestingHelper.IsPreparingQuery()) {
       mLogger->info("Testing queries");
 
-      std::string queryTarget{"cpu.hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
+      // std::string queryTarget{
+      //     "cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,arch=x86,team=SF,"
+      //     "service=19,service_version=1,service_environment=test,usage_guest_nice"};
+      std::string queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
+                              "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
       std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
       assert(targetIndex.has_value());
       mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
 
-      auto nodes = mTrees[*targetIndex]->tree.Query(1451606760000000000, 1451611710000000000);
+      auto nodes = mTrees[*targetIndex]->tree.Query(1464660970000000000, 1464739190000000000);
       // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
       assert(nodes.has_value());
 
@@ -240,7 +331,7 @@ public:
       auto filter = [](SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
         using namespace SeriesQuery;
         return evaluate(
-            Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1451606760000000000}}, GtExpr{val, SignedLiteralExpr{50}}}));
+            Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1452606760000000000}}, GtExpr{val, SignedLiteralExpr{99}}}));
       };
       mTestingHelper.SetQuerying(queryTarget, filter);
 
@@ -335,8 +426,8 @@ private:
   };
 
   static constexpr std::size_t maxOutstandingIO{48};
-  // static constexpr std::size_t bufSize{2097152}; // 2MB
-  static constexpr std::size_t bufSize{4096}; // 4KB
+  static constexpr std::size_t bufSize{2097152}; // 2MB
+  // static constexpr std::size_t bufSize{4096}; // 4KB
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
   struct MetricTree {
@@ -400,44 +491,115 @@ private:
   // std::uint64_t mIndexCounter{0};
 };
 
+void TestingCapnpWriter() {
+  int fd = open("./testingCapnp", O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+
+  ::capnp::MallocMessageBuilder message;
+  proto::Batch::Builder batch = message.initRoot<proto::Batch>();
+  ::capnp::List<proto::Batch::Message>::Builder msgs = batch.initRecordings(2);
+
+  proto::Batch::Message::Builder msg = msgs[0];
+  msg.setMetric("cpu");
+  msg.setTimestamp(1451606400000000000);
+
+  ::capnp::List<proto::Batch::Message::Tag>::Builder tags = msg.initTags(2);
+  tags[0].setName("host");
+  tags[0].setValue("host_0");
+  tags[1].setName("region");
+  tags[1].setValue("eu-central-1");
+
+  ::capnp::List<proto::Batch::Message::Measurement>::Builder measurements = msg.initMeasurements(2);
+  measurements[0].setName("usage_user");
+  measurements[0].setValue(58);
+  measurements[1].setName("usage_system");
+  measurements[1].setValue(2);
+
+  msg = msgs[1];
+  msg.setMetric("cpu");
+  msg.setTimestamp(1451606410000000000);
+
+  tags = msg.initTags(2);
+  tags[0].setName("host");
+  tags[0].setValue("host_0");
+  tags[1].setName("region");
+  tags[1].setValue("eu-central-1");
+
+  measurements = msg.initMeasurements(2);
+  measurements[0].setName("usage_user");
+  measurements[0].setValue(57);
+  measurements[1].setName("usage_system");
+  measurements[1].setValue(3);
+
+  ::capnp::writeMessageToFd(fd, message);
+}
+
+void TestingCapnpReader() {
+  int fd = open("../large-5.capfile", O_RDONLY);
+  ::capnp::StreamFdMessageReader msg(fd);
+
+  proto::Batch::Reader batch = msg.getRoot<proto::Batch>();
+  for (proto::Batch::Message::Reader message : batch.getRecordings()) {
+    std::string res;
+    fmt::format_to(std::back_inserter(res), "Message found: {}\n", message.getMetric().cStr());
+
+    // std::cout << "Message found: " << message.getMetric().cStr() << "\n";
+    // // fmt::print("Message found: {}\n {}", message.getMetric().cStr(), fmt::join("{} -> {}\n",))
+    for (proto::Batch::Message::Tag::Reader tag : message.getTags()) {
+      // std::cout << tag.getName().cStr() << " -> " << tag.getValue().cStr() << "\n";
+      fmt::format_to(std::back_inserter(res), "{} -> {}\n", tag.getName().cStr(), tag.getValue().cStr());
+    }
+    for (proto::Batch::Message::Measurement::Reader measu : message.getMeasurements()) {
+      //   std::cout << measu.getName().cStr() << " -> " << measu.getValue() << "\n";
+      fmt::format_to(std::back_inserter(res), "{} -> {}\n", measu.getName().cStr(), measu.getValue());
+    }
+    fmt::format_to(std::back_inserter(res), "TS: {}\n", message.getTimestamp());
+    // std::cout << "TS: " << message.getTimestamp() << std::endl;
+    fmt::print("{}", res);
+    // for(proto::Batch::Message::Measurement::Reader measu : message.getMeasurements()) {
+    //   std::cout << measu.getName().cStr() << " -> " << measu.getValue() << "\n";
+    // }
+    // std::cout << "TS: " << message.getTimestamp() << std::endl;
+  }
+}
+
 // arrow::Status RunArrow() {
 
 //   // Loop over the row groups and read them in chunks
 //   for (int rg = 0; rg < num_row_groups; rg++) {
 
 //     std::cout << result.value().size() << std::endl;
-    // for(const IMessage& msg : result.value()) {
-    //   std::cout << msg.name << std::endl;
-    // }
+// for(const IMessage& msg : result.value()) {
+//   std::cout << msg.name << std::endl;
+// }
 
-    // Loop over the chunks of the column
-    // int num_chunks = str_col->data()->num_chunks();
-    // for (int chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
-    //   auto chunk = str_col->chunk(chunk_idx);
-    //   auto str_array = std::static_pointer_cast<arrow::StringArray>(chunk);
+// Loop over the chunks of the column
+// int num_chunks = str_col->data()->num_chunks();
+// for (int chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
+//   auto chunk = str_col->chunk(chunk_idx);
+//   auto str_array = std::static_pointer_cast<arrow::StringArray>(chunk);
 
-    //   // Loop over the strings in the chunk
-    //   int64_t num_strings = str_array->length();
-    //   for (int64_t i = 0; i < num_strings; i++) {
-    //     std::cout << str_array->GetString(i) << std::endl;
-    //   }
-    // }
-  // }
-  // std::shared_ptr<arrow::RecordBatch> rbatch;
-  // ARROW_ASSIGN_OR_RAISE(rbatch, ipc_reader->ReadRecordBatch(0));
-  // auto tab = rbatch->column(0);
-  // std::cout << rbatch->ToString() << std::endl;
-  // auto vec = rbatch->columns();
-  // for(const std::string& line : *lines) {
-  // auto arrowStrArr = std::static_pointer_cast<arrow::StringArray>(vec[0]);
-  // for(const auto& arr : vec) {
-  //   // for(const auto& line : *arr) {
-  //     std::cout << (*arr)[0] << std::endl;
-  //   // }
-  // }
-  //   std::cout << line << std::endl;
-  // }
-  // std::vector<IMessage> rekhs = lexy::
+//   // Loop over the strings in the chunk
+//   int64_t num_strings = str_array->length();
+//   for (int64_t i = 0; i < num_strings; i++) {
+//     std::cout << str_array->GetString(i) << std::endl;
+//   }
+// }
+// }
+// std::shared_ptr<arrow::RecordBatch> rbatch;
+// ARROW_ASSIGN_OR_RAISE(rbatch, ipc_reader->ReadRecordBatch(0));
+// auto tab = rbatch->column(0);
+// std::cout << rbatch->ToString() << std::endl;
+// auto vec = rbatch->columns();
+// for(const std::string& line : *lines) {
+// auto arrowStrArr = std::static_pointer_cast<arrow::StringArray>(vec[0]);
+// for(const auto& arr : vec) {
+//   // for(const auto& line : *arr) {
+//     std::cout << (*arr)[0] << std::endl;
+//   // }
+// }
+//   std::cout << line << std::endl;
+// }
+// std::vector<IMessage> rekhs = lexy::
 
 //   return arrow::Status::OK();
 // }
@@ -448,6 +610,9 @@ int main() {
   //   std::cerr << st << std::endl;
   //   return 1;
   // }
+
+  // TestingCapnpWriter();
+  // TestingCapnpReader();
 
   EventLoop::EventLoop loop;
   loop.LoadConfig("FrogFish.toml");
