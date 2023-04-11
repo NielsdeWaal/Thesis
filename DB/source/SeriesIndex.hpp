@@ -3,15 +3,18 @@
 
 #include "File.h"
 #include "Query.hpp"
+#include "robin_hood.h"
 
 #include <tsl/htrie_map.h>
 
 #include <atomic>
-#include <string>
 #include <memory>
+#include <string>
 #include <unordered_map>
 
-class Index: public Common::NonCopyable<Index> , public EventLoop::IUringCallbackHandler {
+class Index
+: public Common::NonCopyable<Index>
+, public EventLoop::IUringCallbackHandler {
 public:
   Index(EventLoop::EventLoop& ev): mStringFile(ev), mSeriesLog(ev), mEv(ev) {
     mLogger = ev.RegisterLogger("SeriesIndex");
@@ -71,7 +74,7 @@ public:
 
     // mEv.SubmitRead(mSeriesLog.GetFd(), mLogFileOffset, buf.GetPtr(), 512);
     {
-     int fd = mSeriesLog.GetFd();
+      int fd = mSeriesLog.GetFd();
       std::unique_ptr<EventLoop::UserData> data = std::make_unique<EventLoop::UserData>();
 
       data->mCallback = this;
@@ -88,7 +91,7 @@ public:
     // mEv.SubmitRead(mStringFile.GetFd(), mStringFileOffset, seriesBuf.GetPtr(), 512);
     // co_await mStringFile.WriteAt(buf, mStringFileOffset);
     {
-     int fd = mStringFile.GetFd();
+      int fd = mStringFile.GetFd();
       std::unique_ptr<EventLoop::UserData> data = std::make_unique<EventLoop::UserData>();
 
       data->mCallback = this;
@@ -107,9 +110,8 @@ public:
 
     return id;
   }
-  
-  void OnCompletion(EventLoop::CompletionQueueEvent& cqe, const EventLoop::UserData* data) override {
-  }
+
+  void OnCompletion(EventLoop::CompletionQueueEvent& cqe, const EventLoop::UserData* data) override {}
 
 
   // [[nodiscard]] std::uint64_t
@@ -166,6 +168,7 @@ private:
   // std::unordered_map<std::string, std::uint64_t> mIndex{};
   // tsl::htrie_map<std::string, std::uint64_t> mIndex{};
   tsl::htrie_map<char, std::uint64_t> mIndex{};
+  // robin_hood::unordered_flat_map<std::string, std::uint64_t> mIndex{};
 
   std::vector<IOOP> mInFlightIO{};
 
