@@ -160,7 +160,14 @@ FetchContent_Declare(
     URL https://lexy.foonathan.net/download/lexy-src.zip
 )
 
-FetchContent_MakeAvailable(CommonLibs TimeTree fmt lexy)
+FetchContent_Declare(
+    tsl_hat_trie
+
+    GIT_REPOSITORY git@github.com:Tessil/hat-trie.git
+    GIT_TAG v0.6.0
+)
+
+FetchContent_MakeAvailable(CommonLibs TimeTree fmt lexy tsl_hat_trie)
 # set_target_properties(EventLoop PROPERTIES IMPORTED_LOCATION k)
 # link_directories(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)
 # add_subdirectory(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)

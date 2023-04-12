@@ -4,6 +4,8 @@
 #include "File.h"
 #include "Query.hpp"
 
+#include <tsl/htrie_map.h>
+
 #include <atomic>
 #include <string>
 #include <memory>
@@ -45,7 +47,8 @@ public:
   }
 
   [[nodiscard]] std::optional<std::uint64_t> GetIndex(const std::string& seriesName) {
-    if (!mIndex.contains(seriesName)) {
+    // if (!mIndex.contains(seriesName)) {
+    if (mIndex.find(seriesName) == mIndex.end()) {
       return std::nullopt;
     }
     return mIndex[seriesName];
@@ -160,7 +163,9 @@ private:
   std::uint64_t mStringFileOffset{0};
   std::uint64_t mLogFileOffset{0};
 
-  std::unordered_map<std::string, std::uint64_t> mIndex{};
+  // std::unordered_map<std::string, std::uint64_t> mIndex{};
+  // tsl::htrie_map<std::string, std::uint64_t> mIndex{};
+  tsl::htrie_map<char, std::uint64_t> mIndex{};
 
   std::vector<IOOP> mInFlightIO{};
 
