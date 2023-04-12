@@ -9,6 +9,8 @@ include_directories(${CAPNP_INCLUDE_DIRS})
 add_definitions(${CAPNP_DEFINITIONS})
 capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS IngestionProtocol/proto.capnp)
 
+# add_subdirectory(third-party/hat-trie)
+
 add_executable(FrogFish
   main.cpp
   FileManager.hpp
@@ -29,7 +31,11 @@ target_link_libraries(FrogFish
   fmt
   foonathan::lexy
   arrow
-  ${CAPNP_LIBRARIES})
+  capnp
+  kj
+  tsl::hat_trie
+  )
+  # ${CAPNP_LIBRARIES})
 
 # add_dependencies(FrogFish
 #   CommonLibs)
