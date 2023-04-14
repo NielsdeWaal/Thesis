@@ -2,6 +2,7 @@
 #include "FileManager.hpp"
 #include "FrogFishTesting.hpp"
 #include "InfluxParser.hpp"
+#include "ManagementPort.hpp"
 #include "MemTable.hpp"
 // #include "lexyparser.hpp"
 #include "IngestionProtocol/proto.capnp.h"
@@ -56,7 +57,8 @@ public:
   , mTSIndexFile(mEv)
   , mTestFile(mEv)
   , mFileManager(mEv) // , mSocket(mEv, this)
-  , mInputs(mEv) {
+  , mInputs(mEv)
+  , mManagement(mEv, mInputs) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
@@ -455,12 +457,13 @@ private:
   // AppendOnlyFile mNodeFile;
   DmaFile mNodeFile;
   AppendOnlyFile mTSIndexFile;
-  FileManager mFileManager;
   std::uint64_t mIngestionCounter{0};
   std::shared_ptr<spdlog::logger> mLogger;
   // Common::StreamSocketServer mSocket;
 
   DmaFile mTestFile;
+  FileManager mFileManager;
+  ManagementPort mManagement;
   int mIngestionMethod{-1};
 
   // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};
