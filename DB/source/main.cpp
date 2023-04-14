@@ -29,6 +29,7 @@
 #include <lexy/input/string_input.hpp>
 #include <lexy_ext/report_error.hpp>
 #include <ranges>
+#include <UDPSocket.h>
 // #include <rigtorp/SPSCQueue.h>
 #include <memory>
 #include <src/TimeTree.hpp>
@@ -67,7 +68,6 @@ public:
     // Writer();
     // auto _ = mTestingHelper.SetLoadingData("../large.arrow");
     // auto _ = mTestingHelper.SetLoadingData("../small-1.capfile");
-    auto _ = mTestingHelper.SetLoadingData("../large-5.capfile");
     // auto _ = mTestingHelper.SetLoadingData("../large.capfile");
     IngestionTask();
   }
@@ -75,16 +75,19 @@ public:
   void Configure() {
     // TODO fix these settings
     auto config = mEv.GetConfigTable("DB");
-    mIngestionMethod = config->get_as<int>("IngestionMethod").value_or(-1);
+    // mIngestionMethod = config->get_as<int>("IngestionMethod").value_or(-1);
+    mLogger->info("Configured: testing file: {}", config->get_as<std::string>("file").value_or(""));
+    auto _ = mTestingHelper.SetLoadingData(config->get_as<std::string>("file").value_or(""));
   }
 
   EventLoop::uio::task<> IngestionTask() {
     // co_await mInputs.ReadFromFile("../medium-plus-1");
     // co_await mInputs.ReadFromFile("../large");
     assert(mTestingHelper.IsLoadingData());
+    mLoadingStarted = true;
     // co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
     // mInputs.ReadFromArrowFile(mTestingHelper.GetFilename());
-    mInputs.ReadFromCapnpFile(mTestingHelper.GetFilename());
+    co_await mInputs.ReadFromCapnpFile(mTestingHelper.GetFilename());
     // co_await mFileManager.SetDataFiles(4);
     co_await mLogFile.OpenAt("./log.dat");
     co_await mNodeFile.OpenAt("./nodes.dat");
@@ -108,11 +111,14 @@ public:
 
         if (!mTrees.contains(log->index)) {
           // mTrees[log->index] = MetricTree{.memtable = Memtable<NULLCompressor, bufSize>{mEv}};
+          mLogger->info("Recreating indexing structure for index: {}", log->index);
           mTrees[log->index] = std::make_unique<MetricTree>(mEv);
         }
 
         mTrees[log->index]->tree.Insert(log->start, log->end, log->offset);
+        mFileOffset = log->offset + bufSize;
       }
+      mLogOffset = (numBlocks + 1) * 512;
     }
 
     mStarted = true;
@@ -191,7 +197,7 @@ public:
       std::string name;
       name.reserve(255);
       if (batch.has_value()) {
-        if(batch.value().size() == 0) {
+        if (batch.value().size() == 0) {
           mIngestionDone = true;
           // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
           mIngestionLatency = mTestingHelper.SetPrepareQuery();
@@ -204,7 +210,7 @@ public:
           name = msg.getMetric();
           name.append(",");
           auto tags = msg.getTags();
-          std::for_each(tags.begin(), tags.end(), [&](proto::Batch::Message::Tag::Reader tag) {
+          std::for_each(tags.begin(), tags.end(), [&](proto::Tag::Reader tag) {
             name.append(std::string{tag.getName().cStr()} + "=" + tag.getValue().cStr() + ",");
           });
           for (const proto::Batch::Message::Measurement::Reader measurement : msg.getMeasurements()) {
@@ -219,8 +225,15 @@ public:
             if (!mTrees.contains(index)) {
               mLogger->info("Creating structures for new series");
               mTrees[index] = std::make_unique<MetricTree>(mEv);
+              // mLogger->warn("End: {}", mTrees[index]->tree.GetRoot()->GetNodeEnd());
             }
             auto& db = mTrees[index];
+            if (msg.getTimestamp() < db->memtable.GetTableEnd()
+                || msg.getTimestamp() < db->tree.GetRoot()->GetNodeEnd()) {
+              // mLogger->info("Already inge");
+              name.resize(name.size() - measurement.getName().size());
+              continue;
+            }
             db->memtable.Insert(msg.getTimestamp(), measurement.getValue());
             // mLogger->info("Ingesting: {}, ts: {}, value: {}", name, msg.getTimestamp() , measurement.getValue());
             if (db->memtable.IsFull()) {
@@ -259,6 +272,9 @@ public:
         mInputs.PushCapOffset(const_cast<capnp::word*>(message.getEnd()));
       }
     }
+    // if (!mLoadingStarted && mTestingHelper.IsLoadingData()) {
+    //   co_await IngestionTask();
+    // }
     co_return;
   }
 
@@ -313,13 +329,17 @@ public:
       // std::string queryTarget{
       //     "cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,arch=x86,team=SF,"
       //     "service=19,service_version=1,service_environment=test,usage_guest_nice"};
+      // std::string
+      // queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
+      //                         "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
       std::string queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
                               "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
       std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
       assert(targetIndex.has_value());
       mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
 
-      auto nodes = mTrees[*targetIndex]->tree.Query(1464660970000000000, 1464739190000000000);
+      // auto nodes = mTrees[*targetIndex]->tree.Query(1464660970000000000, 1464739190000000000);
+      auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
       // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
       assert(nodes.has_value());
 
@@ -362,7 +382,7 @@ public:
             using namespace SeriesQuery;
 
             // memtableSize is the size of the buffer when seen as an array of DataPoint's
-            for (int i = 0; i < memtableSize; ++i) {
+            for (std::size_t i = 0; i < memtableSize; ++i) {
               if (mTestingHelper.ExecFilter(points[i].timestamp, points[i].value)) {
                 mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
               }
@@ -379,7 +399,7 @@ public:
     // When done, print time it took
     // TODO, instead of waiting for the queue to be empty, check with mInputs if there is anythin
     // left to be consumed
-    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mQueringDone == true) {
+    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mQueringDone == true && mDone == false) {
       // auto ingestionEnd = Common::MONOTONIC_CLOCK::Now();
       // auto duration = Common::MONOTONIC_CLOCK::ToNanos(ingestionEnd - mStartTS); // / 100 / 100 / 100;
       mLogger->info("Ingestion took: {}ms, query took: {}ms", mIngestionLatency / 1000000, mQueryLatency / 1000000);
@@ -394,7 +414,8 @@ public:
           mIngestionCounter,
           rateS,
           dataRate);
-      mEv.Stop();
+      // mEv.Stop();
+      mDone = true;
     }
   }
 
@@ -430,6 +451,7 @@ private:
   };
 
   static constexpr std::size_t maxOutstandingIO{48};
+  // static constexpr std::size_t bufSize{4194304}; // 4MB
   static constexpr std::size_t bufSize{2097152}; // 2MB
   // static constexpr std::size_t bufSize{4096}; // 4KB
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
@@ -477,6 +499,8 @@ private:
   bool mIngestionDone{false};
   bool mQueringDone{false};
   bool mQueryStarted{false};
+  bool mDone{false};
+  bool mLoadingStarted{false};
   // std::vector<AppendOnlyFile> mFiles;
 
   Common::MONOTONIC_TIME mStartTS{};
@@ -496,6 +520,50 @@ private:
   // std::uint64_t mIndexCounter{0};
 };
 
+// struct UdpServer: public Common::IUDPSocketHandler {
+// public:
+//   UdpServer(EventLoop::EventLoop& ev): socket(ev, this) {
+//     mLogger = ev.RegisterLogger("udp server");
+//   }
+
+//   void Configure() {
+//     socket.StartListening(nullptr, 8080);
+//   }
+
+//   void OnIncomingData([[maybe_unused]] char* data, [[maybe_unused]] size_t len) override {
+//     mLogger->info("Received udp frame: {}", std::string{data, len});
+//   }
+
+// private:
+//   Common::UDPSocket socket;
+//   std::shared_ptr<spdlog::logger> mLogger;
+// };
+
+class client: public Common::IStreamSocketHandler {
+public:
+  client(EventLoop::EventLoop& ev): mEv(ev), mSocket(ev, this) {
+    mLogger = mEv.RegisterLogger("TCPClient");
+    mSocket.Connect("127.0.0.1", 8080);
+  }
+
+  void OnConnected() final {
+    ::capnp::MallocMessageBuilder response;
+    proto::IdRequest::Builder request = response.initRoot<proto::IdRequest>();
+    // request.
+
+    // mSocket.Send();
+  }
+
+  // void OnDisconnected([[maybe_unused]] Common::StreamSocket* conn) final {}
+
+  void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, char* data, std::size_t len) final {}
+
+private:
+  EventLoop::EventLoop& mEv;
+  Common::StreamSocket mSocket;
+  std::shared_ptr<spdlog::logger> mLogger;
+};
+
 int main() {
   EventLoop::EventLoop loop;
   loop.LoadConfig("FrogFish.toml");
@@ -503,6 +571,9 @@ int main() {
 
   Handler app(loop);
   app.Configure();
+
+  // UdpServer app(loop);
+  // app.Configure();
 
   loop.Run();
 
