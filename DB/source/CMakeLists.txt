@@ -18,6 +18,7 @@ add_executable(FrogFish
   lexyparser.hpp
   lexy_user_config.hpp
   SeriesIndex.hpp
+  ManagementPort.hpp
 
   robin_hood.h
   IngestionProtocol/proto.capnp.h
