@@ -45,7 +45,7 @@ public:
 
   bool IsFull() {
     const std::size_t margin = mCompressor.GetMargin();
-    return (mEnd - mPtr) < margin;
+    return static_cast<std::size_t>(mEnd - mPtr) < margin;
   }
 
   // Flush memtable to flushable buffer
@@ -71,6 +71,10 @@ public:
     }
     mEndTS = timestamp;
     mPtr = mCompressor.Insert(mPtr, timestamp, value);
+  }
+
+  std::uint64_t GetTableEnd() const {
+    return mEndTS;
   }
 
   std::pair<std::uint64_t, std::uint64_t> GetTimeRange() const {

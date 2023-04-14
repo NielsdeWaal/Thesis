@@ -37,7 +37,7 @@ public:
   EventLoop::uio::task<> SetDataFiles(std::size_t count) {
     mAvailable.reserve(count);
     mFiles.reserve(count);
-    for(int i = 0; i < count; ++i) {
+    for(std::size_t i = 0; i < count; ++i) {
       mLogger->info("Opening file nodes{}.dat", i);
       mFiles.emplace_back(mEv);
       co_await mFiles[i].file.OpenAt(fmt::format("nodes{}.dat", i));

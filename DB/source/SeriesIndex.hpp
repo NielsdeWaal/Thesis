@@ -126,6 +126,7 @@ public:
 
     if (mSeriesLog.FileSize() == 0) {
       mLogger->info("New series log");
+      mStartupDone = true;
     } else {
       mLogger->info("Found existing series log, recreating table");
       mStringFileOffset = mStringFile.FileSize();
@@ -147,7 +148,13 @@ public:
           mIndexCounter = log->seriesIndex;
         }
       }
+      mStartupDone = true;
     }
+    co_return;
+  }
+
+  bool StartupDone() const {
+    return mStartupDone;
   }
 
 private:
@@ -164,6 +171,7 @@ private:
   std::atomic<std::uint64_t> mIndexCounter{1};
   std::uint64_t mStringFileOffset{0};
   std::uint64_t mLogFileOffset{0};
+  bool mStartupDone{false};
 
   // std::unordered_map<std::string, std::uint64_t> mIndex{};
   // tsl::htrie_map<std::string, std::uint64_t> mIndex{};

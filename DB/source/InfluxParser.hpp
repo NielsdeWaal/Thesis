@@ -166,9 +166,18 @@ public:
     co_await mIndex.SetupFiles();
 
     int fd = open(filename.c_str(), O_RDONLY);
+    if(fd == ENOENT) {
+      mLogger->error("Failed to open {}, no such file", filename);
+    } else if (fd < 0) {
+      mLogger->error("Failed to open {}, errno: {}", filename, fd);
+    }
     mCapWrapper = std::make_unique<CapnpWrapper>(fd);
   }
+
   std::optional<kj::ArrayPtr<capnp::word>> GetCapReader() {
+    if (!mIndex.StartupDone()) {
+      return std::nullopt;
+    }
     auto words = mCapWrapper->words;
     return words;
   }
@@ -271,7 +280,7 @@ private:
       ::fstat(fd, &stats);
       std::size_t size = stats.st_size;
       void* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
-      if(data == MAP_FAILED) {
+      if (data == MAP_FAILED) {
         spdlog::critical("Failed to mmap");
       }
       ::madvise(data, size, MADV_SEQUENTIAL);
