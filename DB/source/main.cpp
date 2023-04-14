@@ -8,6 +8,7 @@
 #include "IngestionProtocol/proto.capnp.h"
 #include "Query.hpp"
 #include "TSC.h"
+#include "Writer.hpp"
 
 #include <arrow/array.h>
 #include <arrow/csv/api.h>
@@ -53,12 +54,13 @@ class Handler
 public:
   explicit Handler(EventLoop::EventLoop& ev)
   : mEv(ev)
-  , mLogFile(mEv)
-  , mNodeFile(mEv)
+  // , mLogFile(mEv)
+  // , mNodeFile(mEv)
   , mTSIndexFile(mEv)
   , mTestFile(mEv)
   , mFileManager(mEv) // , mSocket(mEv, this)
   , mInputs(mEv)
+  , mWriter(mEv, mInputs, maxOutstandingIO)
   , mManagement(mEv, mInputs) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
@@ -84,112 +86,82 @@ public:
     // co_await mInputs.ReadFromFile("../medium-plus-1");
     // co_await mInputs.ReadFromFile("../large");
     assert(mTestingHelper.IsLoadingData());
+    co_await mWriter.Configure();
     mLoadingStarted = true;
     // co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
     // mInputs.ReadFromArrowFile(mTestingHelper.GetFilename());
     co_await mInputs.ReadFromCapnpFile(mTestingHelper.GetFilename());
     // co_await mFileManager.SetDataFiles(4);
-    co_await mLogFile.OpenAt("./log.dat");
-    co_await mNodeFile.OpenAt("./nodes.dat");
-
-    mLogger->info("Opened files, logs: {}, nodes: {}", mLogFile.GetFd(), mNodeFile.GetFd());
-
-    if (mLogFile.FileSize() > 0) {
-      mLogger->info("Found existing log file, recreating indexing structures");
-      std::size_t numBlocks = mLogFile.FileSize() / 512;
-      mLogger->info("Reading {} blocks", numBlocks);
-      for (std::size_t i = 0; i < numBlocks; ++i) {
-        EventLoop::DmaBuffer logBuf = co_await mLogFile.ReadAt(i * 512, 512);
-        LogPoint* log = ( LogPoint* ) logBuf.GetPtr();
-
-        mLogger->info(
-            "Found insertion with index: {} for range: ({} -> {}) at offset: {}",
-            log->index,
-            log->start,
-            log->end,
-            log->offset);
-
-        if (!mTrees.contains(log->index)) {
-          // mTrees[log->index] = MetricTree{.memtable = Memtable<NULLCompressor, bufSize>{mEv}};
-          mLogger->info("Recreating indexing structure for index: {}", log->index);
-          mTrees[log->index] = std::make_unique<MetricTree>(mEv);
-        }
-
-        mTrees[log->index]->tree.Insert(log->start, log->end, log->offset);
-        mFileOffset = log->offset + bufSize;
-      }
-      mLogOffset = (numBlocks + 1) * 512;
-    }
 
     mStarted = true;
-    // auto start = Common::MONOTONIC_CLOCK::Now();
+    // auto start = Common::MONOTONIC_CLOK::Now();
     mStartTS = Common::MONOTONIC_CLOCK::Now();
     auto loadingLatency = mTestingHelper.SetIngesting();
     mLogger->info("Loading data took: {}", loadingLatency);
   }
 
   // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
-  EventLoop::uio::task<> Writer(const IMessage& msg) {
-    // EventLoop::uio::task<> Writer(const proto::Batch::Message& msg) {
-    // mLogger->info("Writing for {} measurements", msg.measurements.size());
-    // mLogger->info("Ingesting {}", msg.getMetric());
-    for (const InfluxKV& measurement : msg.measurements) {
-      if (!mTrees.contains(measurement.index)) {
-        mLogger->info("Creating structures for new series");
-        // mTrees[measurement.index] = MetricTree{.memtable= Memtable<NULLCompressor, bufSize>{mEv}};
-        mTrees[measurement.index] = std::make_unique<MetricTree>(mEv);
-      }
-      auto& db = mTrees[measurement.index];
-      // FIXME for now we only support longs
-      if (std::holds_alternative<InfluxMValue>(measurement.value)) {
-        // db.memtable[db.ctr] =
-        //     DataPoint{.timestamp = msg.ts, .value =
-        //     std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value)};
-        // ++db.ctr;
-        db->memtable.Insert(msg.ts, std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value));
-        if (db->memtable.IsFull()) {
-          // EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
-          auto [startTS, endTS] = db->memtable.GetTimeRange();
-          db->memtable.Flush(db->flushBuf);
+  // EventLoop::uio::task<> Writer(const IMessage& msg) {
+  //   // EventLoop::uio::task<> Writer(const proto::Batch::Message& msg) {
+  //   // mLogger->info("Writing for {} measurements", msg.measurements.size());
+  //   // mLogger->info("Ingesting {}", msg.getMetric());
+  //   for (const InfluxKV& measurement : msg.measurements) {
+  //     if (!mTrees.contains(measurement.index)) {
+  //       mLogger->info("Creating structures for new series");
+  //       // mTrees[measurement.index] = MetricTree{.memtable= Memtable<NULLCompressor, bufSize>{mEv}};
+  //       mTrees[measurement.index] = std::make_unique<MetricTree>(mEv);
+  //     }
+  //     auto& db = mTrees[measurement.index];
+  //     // FIXME for now we only support longs
+  //     if (std::holds_alternative<InfluxMValue>(measurement.value)) {
+  //       // db.memtable[db.ctr] =
+  //       //     DataPoint{.timestamp = msg.ts, .value =
+  //       //     std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value)};
+  //       // ++db.ctr;
+  //       db->memtable.Insert(msg.ts, std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value));
+  //       if (db->memtable.IsFull()) {
+  //         // EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
+  //         auto [startTS, endTS] = db->memtable.GetTimeRange();
+  //         db->memtable.Flush(db->flushBuf);
 
-          // EventLoop::DmaBuffer buf = db->memtable.Flush();
-          // EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
+  //         // EventLoop::DmaBuffer buf = db->memtable.Flush();
+  //         // EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
 
-          // std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
-          mIOQueue.push_back(WriteOperation{.buf = db->flushBuf, .pos = mFileOffset, .type = File::NODE_FILE});
+  //         // std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
+  //         mIOQueue.push_back(WriteOperation{.buf = db->flushBuf, .pos = mFileOffset, .type = File::NODE_FILE});
 
-          // FIXME handle case where insertion fails for whatever reason
-          // db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
-          db->tree.Insert(startTS, endTS, mFileOffset);
+  //         // FIXME handle case where insertion fails for whatever reason
+  //         // db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
+  //         db->tree.Insert(startTS, endTS, mFileOffset);
 
-          mLogger->info(
-              "Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}",
-              msg.name + "." + measurement.name,
-              measurement.index,
-              startTS,
-              endTS,
-              mFileOffset);
+  //         mLogger->info(
+  //             "Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}",
+  //             msg.name + "." + measurement.name,
+  //             measurement.index,
+  //             startTS,
+  //             endTS,
+  //             mFileOffset);
 
-          LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
-          log->start = startTS;
-          log->end = endTS;
-          log->offset = mFileOffset;
-          log->index = measurement.index;
-          // co_await mLogFile.WriteAt(logBuf, logOffset);
-          mIOQueue.push_back(WriteOperation{.buf = db->logBuf, .pos = mLogOffset, .type = File::LOG_FILE});
+  //         LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
+  //         log->start = startTS;
+  //         log->end = endTS;
+  //         log->offset = mFileOffset;
+  //         log->index = measurement.index;
+  //         // co_await mLogFile.WriteAt(logBuf, logOffset);
+  //         mIOQueue.push_back(WriteOperation{.buf = db->logBuf, .pos = mLogOffset, .type = File::LOG_FILE});
 
-          mFileOffset += bufSize;
-          mLogOffset += 512;
-          db->ctr = 0;
-        }
-      } else {
-        // Something must have gone wrong during parsing
-        assert(false);
-      }
-      ++mIngestionCounter;
-    }
-    co_return;
-  }
+  //         mFileOffset += bufSize;
+  //         mLogOffset += 512;
+  //         db->ctr = 0;
+  //       }
+  //     } else {
+  //       // Something must have gone wrong during parsing
+  //       assert(false);
+  //     }
+  //     ++mIngestionCounter;
+  //   }
+  //   co_return;
+  // }
 
   EventLoop::uio::task<> HandleCapnpIngestion() {
     if (mStarted) {
@@ -215,55 +187,10 @@ public:
           });
           for (const proto::Batch::Message::Measurement::Reader measurement : msg.getMeasurements()) {
             name.append(measurement.getName());
-            int index{0};
-            if (auto nameIndex = mInputs.GetIndex(name); nameIndex.has_value()) {
-              index = nameIndex.value();
-            } else {
-              index = mInputs.InsertSeries(name);
-            }
 
-            if (!mTrees.contains(index)) {
-              mLogger->info("Creating structures for new series");
-              mTrees[index] = std::make_unique<MetricTree>(mEv);
-              // mLogger->warn("End: {}", mTrees[index]->tree.GetRoot()->GetNodeEnd());
-            }
-            auto& db = mTrees[index];
-            if (msg.getTimestamp() < db->memtable.GetTableEnd()
-                || msg.getTimestamp() < db->tree.GetRoot()->GetNodeEnd()) {
-              // mLogger->info("Already inge");
-              name.resize(name.size() - measurement.getName().size());
-              continue;
-            }
-            db->memtable.Insert(msg.getTimestamp(), measurement.getValue());
-            // mLogger->info("Ingesting: {}, ts: {}, value: {}", name, msg.getTimestamp() , measurement.getValue());
-            if (db->memtable.IsFull()) {
-              auto [startTS, endTS] = db->memtable.GetTimeRange();
-              db->memtable.Flush(db->flushBuf);
-              mIOQueue.push_back(WriteOperation{.buf = db->flushBuf, .pos = mFileOffset, .type = File::NODE_FILE});
-
-              db->tree.Insert(startTS, endTS, mFileOffset);
-
-              mLogger->info(
-                  "Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}",
-                  name,
-                  index,
-                  startTS,
-                  endTS,
-                  mFileOffset);
-
-              LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
-              log->start = startTS;
-              log->end = endTS;
-              log->offset = mFileOffset;
-              log->index = index;
-              // co_await mLogFile.WriteAt(logBuf, logOffset);
-              mIOQueue.push_back(WriteOperation{.buf = db->logBuf, .pos = mLogOffset, .type = File::LOG_FILE});
-
-              mFileOffset += bufSize;
-              mLogOffset += 512;
-              db->ctr = 0;
-            }
             ++mIngestionCounter;
+
+            mWriter.Insert(name, msg.getTimestamp(), measurement.getValue());
 
             name.resize(name.size() - measurement.getName().size());
           }
@@ -278,27 +205,27 @@ public:
     co_return;
   }
 
-  EventLoop::uio::task<> HandleIngestion() {
-    if (mStarted) {
-      std::size_t chunkSize{1000};
-      auto chunk = co_await mInputs.ReadArrowChunk();
-      // auto& chunk = co_await mInputs.ReadCapChunk(chunkSize);
-      // std::optional<std::vector<IMessage>> chunk = co_await mInputs.ReadArrowChunk();
-      if (chunk.has_value()) {
-        // mLogger->info("Reading chunk of size: {}", chunk->size());
-        for (const auto& measurement : *chunk) {
-          // for (const auto& measurement : chunk) {
-          co_await Writer(measurement);
-        }
-      } else {
-        // Finished with ingestion - switching to query tests
-        mIngestionDone = true;
-        // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
-        mIngestionLatency = mTestingHelper.SetPrepareQuery();
-        mLogger->info("Ingestion took: {}", mIngestionLatency);
-      }
-    }
-  }
+  // EventLoop::uio::task<> HandleIngestion() {
+  //   if (mStarted) {
+  //     std::size_t chunkSize{1000};
+  //     auto chunk = co_await mInputs.ReadArrowChunk();
+  //     // auto& chunk = co_await mInputs.ReadCapChunk(chunkSize);
+  //     // std::optional<std::vector<IMessage>> chunk = co_await mInputs.ReadArrowChunk();
+  //     if (chunk.has_value()) {
+  //       // mLogger->info("Reading chunk of size: {}", chunk->size());
+  //       for (const auto& measurement : *chunk) {
+  //         // for (const auto& measurement : chunk) {
+  //         co_await Writer(measurement);
+  //       }
+  //     } else {
+  //       // Finished with ingestion - switching to query tests
+  //       mIngestionDone = true;
+  //       // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
+  //       mIngestionLatency = mTestingHelper.SetPrepareQuery();
+  //       mLogger->info("Ingestion took: {}", mIngestionLatency);
+  //     }
+  //   }
+  // }
 
   void OnEventLoopCallback() override {
     if (mTestingHelper.IsIngesting()) {
@@ -306,24 +233,8 @@ public:
       HandleCapnpIngestion();
     }
 
-    if (mIOQueue.size() > 0 && mOutstandingIO < maxOutstandingIO && mStarted) {
-      // TODO instead of awaitables, these can just be regular uring requests
-      if (mIOQueue.front().type == File::NODE_FILE) {
-        mLogger->debug("Room to issue request, writing to nodefile at pos: {}", mIOQueue.front().pos);
-        EventLoop::SqeAwaitable awaitable = mNodeFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
-        awaitable.SetCallback([&](int res) { IOResolveCallback(res); });
-      } else if (mIOQueue.front().type == File::LOG_FILE) {
-        mLogger->debug("Room to issue request, writing to log at pos: {}", mIOQueue.front().pos);
-        // mLogFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
-        EventLoop::SqeAwaitable awaitable = mLogFile.WriteAt(mIOQueue.front().buf, mIOQueue.front().pos);
-        awaitable.SetCallback([&](int res) { IOResolveCallback(res); });
-      }
-      mIOQueue.pop_front();
-      ++mOutstandingIO;
-      // issue operation
-    }
-
-    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mTestingHelper.IsPreparingQuery()) {
+    if ( // mIOQueue.size() == 0 &&
+        mWriter.GetOutstandingIO() == 0 && mTestingHelper.IsPreparingQuery()) {
       mLogger->info("Testing queries");
 
       // std::string queryTarget{
@@ -339,7 +250,8 @@ public:
       mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
 
       // auto nodes = mTrees[*targetIndex]->tree.Query(1464660970000000000, 1464739190000000000);
-      auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
+      // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
+      auto nodes = mWriter.GetTreeForIndex(targetIndex.value()).Query(1451606400000000000, 1452917110000000000);
       // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
       assert(nodes.has_value());
 
@@ -360,7 +272,7 @@ public:
       mTestingHelper.SetQuerying(queryTarget, filter);
 
       // TODO support multiple starting multiple queries
-      mRunningQueries.emplace_back(mEv, mNodeFile.GetFd(), addrs, bufSize);
+      mRunningQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize);
       mQueryStarted = true;
     }
 
@@ -399,7 +311,8 @@ public:
     // When done, print time it took
     // TODO, instead of waiting for the queue to be empty, check with mInputs if there is anythin
     // left to be consumed
-    if (mIOQueue.size() == 0 && mOutstandingIO == 0 && mStarted && mQueringDone == true && mDone == false) {
+    if ( // mIOQueue.size() == 0 &&
+        mWriter.GetOutstandingIO() == 0 && mStarted && mQueringDone == true && mDone == false) {
       // auto ingestionEnd = Common::MONOTONIC_CLOCK::Now();
       // auto duration = Common::MONOTONIC_CLOCK::ToNanos(ingestionEnd - mStartTS); // / 100 / 100 / 100;
       mLogger->info("Ingestion took: {}ms, query took: {}ms", mIngestionLatency / 1000000, mQueryLatency / 1000000);
@@ -419,36 +332,26 @@ public:
     }
   }
 
-  void IOResolveCallback(int result) {
-    mOutstandingIO -= 1;
-  }
+  // void IOResolveCallback(int result) {
+  //   mWriter.GetOutstandingIO() -= 1;
+  // }
 
 
 private:
-  enum class File : std::uint8_t {
-    NODE_FILE = 0,
-    LOG_FILE,
-  };
   struct DataPoint {
     std::uint64_t timestamp;
     std::int64_t value;
-  };
-  struct LogPoint {
-    std::uint64_t start;
-    std::uint64_t end;
-    std::uint64_t offset;
-    std::uint64_t index;
   };
   struct TSIndexLog {
     std::size_t len;
     char* name;
     std::uint64_t index;
   };
-  struct WriteOperation {
-    EventLoop::DmaBuffer& buf;
-    std::uint64_t pos;
-    File type;
-  };
+  // struct WriteOperation {
+  //   EventLoop::DmaBuffer& buf;
+  //   std::uint64_t pos;
+  //   File type;
+  // };
 
   static constexpr std::size_t maxOutstandingIO{48};
   // static constexpr std::size_t bufSize{4194304}; // 4MB
@@ -456,28 +359,14 @@ private:
   // static constexpr std::size_t bufSize{4096}; // 4KB
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
-  struct MetricTree {
-    MetricTree(EventLoop::EventLoop& ev)
-    : memtable(ev)
-    , flushBuf(ev.AllocateDmaBuffer(bufSize))
-    , logBuf(ev.AllocateDmaBuffer(512)) {}
-    TimeTree<64> tree;
-    std::size_t ctr;
-    // std::array<DataPoint, memtableSize> memtable{};
-    Memtable<NULLCompressor, bufSize> memtable;
-    EventLoop::DmaBuffer flushBuf;
-    EventLoop::DmaBuffer logBuf;
-  };
 
   struct IngestionPoint {
     std::string series;
     std::uint64_t timestamp;
     std::uint64_t value;
   };
+
   EventLoop::EventLoop& mEv;
-  DmaFile mLogFile;
-  // AppendOnlyFile mNodeFile;
-  DmaFile mNodeFile;
   AppendOnlyFile mTSIndexFile;
   std::uint64_t mIngestionCounter{0};
   std::shared_ptr<spdlog::logger> mLogger;
@@ -488,14 +377,13 @@ private:
   ManagementPort mManagement;
   int mIngestionMethod{-1};
 
+  Writer<bufSize> mWriter;
+
   // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};
   // rigtorp::SPSCQueue<std::pair<EventLoop::SqeAwaitable, EventLoop::deferred_resolver>> mIOQueue{32};
   // rigtorp::SPSCQueue<EventLoop::deferred_resolver> mIOQueue{32};
-  std::deque<WriteOperation> mIOQueue{};
-  std::uint64_t mOutstandingIO{0};
+  // std::deque<WriteOperation> mIOQueue{};
   bool mStarted{false};
-  std::size_t mFileOffset{0};
-  std::size_t mLogOffset{0};
   bool mIngestionDone{false};
   bool mQueringDone{false};
   bool mQueryStarted{false};
@@ -512,7 +400,6 @@ private:
   // TimeTree<64> mTree;
   // std::unordered_map<std::string, MetricTree> mTrees;
   // std::unordered_map<std::uint64_t, MetricTree> mTrees;
-  std::unordered_map<std::uint64_t, std::unique_ptr<MetricTree>> mTrees;
 
   std::vector<Query> mRunningQueries;
   TestingHelper mTestingHelper;

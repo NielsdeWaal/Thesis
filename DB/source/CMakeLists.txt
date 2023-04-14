@@ -1,4 +1,4 @@
-add_compile_options(-std=c++20 -Wall -g -Wextra -Wshadow -Wnon-virtual-dtor -Wunused -Wpedantic)
+add_compile_options(-std=c++20 -Wall -g -O3 -Wextra -Wshadow -Wnon-virtual-dtor -Wunused -Wpedantic)
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 # add_compile_definitions(LEXY_USER_CONFIG_HEADER "lexy_user_config.hpp")
@@ -19,6 +19,7 @@ add_executable(FrogFish
   lexy_user_config.hpp
   SeriesIndex.hpp
   ManagementPort.hpp
+  Writer.hpp
 
   robin_hood.h
   IngestionProtocol/proto.capnp.h
