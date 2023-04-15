@@ -42,11 +42,15 @@ public:
     });
     name.append(managementMsg.getMetric().cStr());
 
-    std::uint64_t index = mIndex.InsertSeries(name);
+    // std::uint64_t index = mIndex.InsertSeries(name);
+    std::optional<std::uint64_t> index = mIndex.GetIndex(name);
+    if(!index.has_value()) {
+      index = mIndex.InsertSeries(name);
+    }
 
     ::capnp::MallocMessageBuilder response;
     proto::IdResponse::Builder res = response.initRoot<proto::IdResponse>();
-    res.setSetId(index);
+    res.setSetId(index.value());
 
     auto encodedArray = capnp::messageToFlatArray(response);
     auto encodedArrayPtr = encodedArray.asChars();
@@ -55,7 +59,7 @@ public:
 
     conn->Send(encodedCharArray, size);
     
-    conn->Shutdown();
+    // conn->Shutdown();
   }
 
 private:

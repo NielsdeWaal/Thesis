@@ -2,6 +2,7 @@
 #include "FileManager.hpp"
 #include "FrogFishTesting.hpp"
 #include "InfluxParser.hpp"
+#include "IngestionPort.hpp"
 #include "ManagementPort.hpp"
 #include "MemTable.hpp"
 // #include "lexyparser.hpp"
@@ -61,6 +62,7 @@ public:
   , mFileManager(mEv) // , mSocket(mEv, this)
   , mInputs(mEv)
   , mWriter(mEv, mInputs, maxOutstandingIO)
+  , mIngestPort(mEv, mWriter)
   , mManagement(mEv, mInputs) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
@@ -78,8 +80,12 @@ public:
     // TODO fix these settings
     auto config = mEv.GetConfigTable("DB");
     // mIngestionMethod = config->get_as<int>("IngestionMethod").value_or(-1);
-    mLogger->info("Configured: testing file: {}", config->get_as<std::string>("file").value_or(""));
+    mLogger->info(
+        "Configured:\n\t testing file: {}\n\t Ingest port base: {}",
+        config->get_as<std::string>("file").value_or(""),
+        config->get_as<std::uint16_t>("IngestBasePort").value_or(0));
     auto _ = mTestingHelper.SetLoadingData(config->get_as<std::string>("file").value_or(""));
+    mIngestPort.Configure(config->get_as<std::uint16_t>("IngestBasePort").value_or(0));
   }
 
   EventLoop::uio::task<> IngestionTask() {
@@ -375,6 +381,7 @@ private:
   DmaFile mTestFile;
   FileManager mFileManager;
   ManagementPort mManagement;
+  IngestionPort<bufSize> mIngestPort;
   int mIngestionMethod{-1};
 
   Writer<bufSize> mWriter;

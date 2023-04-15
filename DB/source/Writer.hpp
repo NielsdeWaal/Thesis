@@ -70,48 +70,11 @@ public:
     } else {
       index = mInputs.InsertSeries(name);
     }
+    WriteToIndex(index, ts, value);
+  }
 
-    if (!mTrees.contains(index)) {
-      mLogger->info("Creating structures for new series");
-      mTrees[index] = std::make_unique<MetricTree>(mEv);
-      // mLogger->warn("End: {}", mTrees[index]->tree.GetRoot()->GetNodeEnd());
-    }
-
-    auto& db = mTrees[index];
-    if (ts < db->memtable.GetTableEnd() || ts < db->tree.GetRoot()->GetNodeEnd()) {
-      // mLogger->info("Already inge");
-      // name.resize(name.size() - measurement.getName().size());
-      return;
-    }
-    db->memtable.Insert(ts, value);
-    // mLogger->info("Ingesting: {}, ts: {}, value: {}", name, msg.getTimestamp() , measurement.getValue());
-    if (db->memtable.IsFull()) {
-      auto [startTS, endTS] = db->memtable.GetTimeRange();
-      db->memtable.Flush(db->flushBuf);
-      mIOQueue.push_back(WriteOperation{.buf = db->flushBuf, .pos = mFileOffset, .type = File::NODE_FILE});
-
-      db->tree.Insert(startTS, endTS, mFileOffset);
-
-      mLogger->info(
-          "Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}",
-          name,
-          index,
-          startTS,
-          endTS,
-          mFileOffset);
-
-      LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
-      log->start = startTS;
-      log->end = endTS;
-      log->offset = mFileOffset;
-      log->index = index;
-      // co_await mLogFile.WriteAt(logBuf, logOffset);
-      mIOQueue.push_back(WriteOperation{.buf = db->logBuf, .pos = mLogOffset, .type = File::LOG_FILE});
-
-      mFileOffset += bufSize;
-      mLogOffset += 512;
-      db->ctr = 0;
-    }
+  void Insert(std::uint64_t index, std::uint64_t ts, std::int64_t value) {
+    WriteToIndex(index, ts, value);
   }
 
   std::size_t GetOutstandingIO() const {
@@ -151,6 +114,50 @@ public:
   }
 
 private:
+  void WriteToIndex(std::uint64_t index, std::uint64_t timestamp, std::int64_t value) {
+    if (!mTrees.contains(index)) {
+      mLogger->info("Creating structures for new series");
+      mTrees[index] = std::make_unique<MetricTree>(mEv);
+      // mLogger->warn("End: {}", mTrees[index]->tree.GetRoot()->GetNodeEnd());
+    }
+
+    auto& db = mTrees[index];
+    if (timestamp < db->memtable.GetTableEnd() || timestamp < db->tree.GetRoot()->GetNodeEnd()) {
+      // mLogger->info("Already inge");
+      // name.resize(name.size() - measurement.getName().size());
+      return;
+    }
+    db->memtable.Insert(timestamp, value);
+    // mLogger->info("Ingesting: {}, timestamp: {}, value: {}", name, msg.getTimestamp() , measurement.getValue());
+    if (db->memtable.IsFull()) {
+      auto [startTS, endTS] = db->memtable.GetTimeRange();
+      db->memtable.Flush(db->flushBuf);
+      mIOQueue.push_back(WriteOperation{.buf = db->flushBuf, .pos = mFileOffset, .type = File::NODE_FILE});
+
+      db->tree.Insert(startTS, endTS, mFileOffset);
+
+      mLogger->info(
+          "Flushing memtable for (index: {} ts: {} - {}) to file at addr: {}",
+          // name,
+          index,
+          startTS,
+          endTS,
+          mFileOffset);
+
+      LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
+      log->start = startTS;
+      log->end = endTS;
+      log->offset = mFileOffset;
+      log->index = index;
+      // co_await mLogFile.WriteAt(logBuf, logOffset);
+      mIOQueue.push_back(WriteOperation{.buf = db->logBuf, .pos = mLogOffset, .type = File::LOG_FILE});
+
+      mFileOffset += bufSize;
+      mLogOffset += 512;
+      db->ctr = 0;
+    }
+    
+  }
   enum class File : std::uint8_t {
     NODE_FILE = 0,
     LOG_FILE,
