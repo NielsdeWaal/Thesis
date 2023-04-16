@@ -259,7 +259,7 @@ public:
     return mMessages.end();
   }
 
-  auto GetIndex(const std::string& name) {
+  std::optional<std::uint64_t> GetIndex(const std::string& name) {
     return mIndex.GetIndex(name);
   }
 
