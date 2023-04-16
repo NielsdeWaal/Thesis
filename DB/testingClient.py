@@ -29,7 +29,7 @@ client.connect(("127.0.0.1", port))
 
 # print(f"{response}")
 
-f = open('small-1.capfile', 'r+b')
+f = open('large-5.capfile', 'r+b')
 nameSet = set()
 nameMap = {}
 for batch in batch_capnp.Batch.read_multiple(f):
@@ -63,72 +63,22 @@ for batch in batch_capnp.Batch.read_multiple(f):
 
 
     # print(sendBatch)
-    for k, v in sendBatch.items():
-        insertMsg = batch_capnp.InsertionBatch.new_message()
-        recording = insertMsg.init('recordings', 1) # TODO move out of loop as multple groups can be send in one request
-        recording[0].tag = nameMap[k]
-        values = recording[0].init('measurements', len(v["data"]))
+    insertMsg = batch_capnp.InsertionBatch.new_message()
+    group = []
+    recording = insertMsg.init('recordings', 8)
+    iter = 0
+    for i, (k, v) in enumerate(sendBatch.items()):
+        # recording = insertMsg.init('recordings', 1) # TODO move out of loop as multple groups can be send in one request
+        recording[i%8].tag = nameMap[k]
+        values = recording[i%8].init('measurements', len(v["data"]))
         for val, measurement in zip(values, v["data"]):
             val.timestamp = measurement["ts"]
             val.value = measurement["val"]
 
         # print(len(insertMsg.to_bytes()))
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
-        sock.sendto(insertMsg.to_bytes(), ("127.0.0.1", 1337))
+        if i%8 == 0 and i != 0:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
+            sock.sendto(insertMsg.to_bytes(), ("127.0.0.1", 1337))
+            insertMsg = batch_capnp.InsertionBatch.new_message()
+            recording = insertMsg.init('recordings', 8)
         # time.sleep(1)
-
-        # print(insertMsg)
-
-        # for batch in v["data"]:
-        #     id = nameMap[k]
-    #     if k not in nameMap:
-            # msg = batch_capnp.IdRequest.new_message()
-            
-            
-    # exit(0)
-                # nameSet.add(name)
-
-
-print(nameSet)
-
-        
-    # for recording in batch.recordings:
-    #     for measurement in recording.measurements:
-    #         msg = batch_capnp.IdRequest.new_message()
-    #         tagSet = msg.init('tagSet', len(recording.tags))
-    #     # name = f"{recording.metric},"
-    #     # name += reduce(lambda acc, tag: acc + (tag.name + "=" + tag.value + ","), recording.tags)
-    #         for entry, tag in zip(tagSet, recording.tags):
-    #             entry.name = tag.name
-    #             entry.value = tag.value
-    #         # name += f"{tag.name}={tag.value},"
-
-    #         msg.metric = measurement.name
-    #         client.send(msg.to_bytes())
-
-    #         response = client.recv(4096)
-    #         # print(response)
-    #         with batch_capnp.IdResponse.from_bytes(response) as respMsg:
-    #             print(f"Received {respMsg.setId} as id, creating batch")
-    #             insertMsg = batch_capnp.InsertionBatch.new_message()
-    #             msgs = insertMsg.init('recordings', 1)
-    #             msgs[0].tag = respMsg.setId
-    #             vals = msgs[0].init('measurements', 1)
-    #             vals[0].timestamp = recording.timestamp
-    #             vals[0].value = measurement.value
-
-    #             print(insertMsg)
-    #             # client.send(insertMsg.to_bytes())
-    #             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
-    #             sock.sendto(insertMsg.to_bytes(), ("127.0.0.1", 1337))
-            # print(f"{name}{measurement.name}")
-            
-    # exit(0)
-
-# resp = batch_capnp.IdResponse.from_bytes(response)
-# with batch_capnp.IdResponse.from_bytes(response) as msg:
-#     print(f"Received {msg.id} as id, creating batch")
-# print(resp.setId)
-# for k,v in temp_dict:
-#     print(f"{k} -> {v}")
-# print(f"Got response ID: {resp.id}")

@@ -21,9 +21,9 @@ public:
 
   void OnIncomingData([[maybe_unused]] char* data, [[maybe_unused]] size_t len) override {
     // mLogger->info("Received udp frame: {}", std::string{data, len});
-    auto buf = std::aligned_alloc(512, len);
-    std::memcpy(buf, data, len);
-    auto pdata = kj::arrayPtr(( const capnp::word* ) buf, len / sizeof(capnp::word));
+    // auto buf = std::aligned_alloc(512, len);
+    // std::memcpy(buf, data, len);
+    auto pdata = kj::arrayPtr(( const capnp::word* ) data, len / sizeof(capnp::word));
     capnp::FlatArrayMessageReader msg{pdata};
     proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
 
@@ -32,7 +32,7 @@ public:
     // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
     // auto msgs = insertMsg.getRecordings();
     for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
-      mLogger->info("Received insert for tag: {}", batch.getTag());
+      // mLogger->info("Received insert for tag: {}", batch.getTag());
       for(const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
         mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
         ++ingestCount;
@@ -42,7 +42,7 @@ public:
     double timeTakenS = duration / 1000000000.;
     double rateS = ingestCount / timeTakenS;
     double dataRate = (rateS * 128) / 1000000;
-    mLogger->info("Ingested {} points in {}s, rate: {}MB/s", ingestCount, timeTakenS, dataRate);
+    mLogger->info("Ingested {} points in {}s, rate: {}MB/s / {} points/sec", ingestCount, timeTakenS, dataRate, rateS);
   }
 
 private:

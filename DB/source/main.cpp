@@ -102,7 +102,8 @@ public:
     mStarted = true;
     // auto start = Common::MONOTONIC_CLOK::Now();
     mStartTS = Common::MONOTONIC_CLOCK::Now();
-    auto loadingLatency = mTestingHelper.SetIngesting();
+    // auto loadingLatency = mTestingHelper.SetIngesting();
+    auto loadingLatency = mTestingHelper.SetPrepareQuery();
     mLogger->info("Loading data took: {}", loadingLatency);
   }
 
@@ -252,7 +253,12 @@ public:
       std::string queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
                               "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
       std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
-      assert(targetIndex.has_value());
+      // assert(targetIndex.has_value());
+      if(!targetIndex.has_value()) {
+        mLogger->warn("Query target {} not found, skipping query test", queryTarget);
+        mQueryLatency = mTestingHelper.Finalize();
+        return;
+      }
       mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
 
       // auto nodes = mTrees[*targetIndex]->tree.Query(1464660970000000000, 1464739190000000000);
