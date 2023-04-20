@@ -7,6 +7,7 @@
 #include "MemTable.hpp"
 // #include "lexyparser.hpp"
 #include "IngestionProtocol/proto.capnp.h"
+#include "MetaData.hpp"
 #include "Query.hpp"
 #include "TSC.h"
 #include "Writer.hpp"
@@ -60,10 +61,11 @@ public:
   , mTSIndexFile(mEv)
   , mTestFile(mEv)
   , mFileManager(mEv) // , mSocket(mEv, this)
-  , mInputs(mEv)
-  , mWriter(mEv, mInputs, maxOutstandingIO)
+  // , mInputs(mEv)
+  , mMetaData(mEv)
+  , mWriter(mEv, mMetaData, maxOutstandingIO)
   , mIngestPort(mEv, mWriter)
-  , mManagement(mEv, mInputs) {
+  , mManagement(mEv, mMetaData) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
@@ -74,6 +76,20 @@ public:
     // auto _ = mTestingHelper.SetLoadingData("../small-1.capfile");
     // auto _ = mTestingHelper.SetLoadingData("../large.capfile");
     IngestionTask();
+
+
+    // FIXME move to test
+    // MetaData data;
+    // data.Insert({{"host", "01"}, {"rack", "1"}});
+    // data.Insert({{"host", "02"}, {"rack", "1"}});
+
+    // auto ids = data.QueryValues("rack", {"1"});
+    // assert(ids.has_value());
+    // assert(ids->size() == 2);
+    // ids = data.QueryValues("host", {"01"});
+    // mLogger->warn("Size: {}", ids->size());
+    // assert(ids.has_value());
+    // assert(ids->size() == 1);
   }
 
   void Configure() {
@@ -84,7 +100,7 @@ public:
         "Configured:\n\t testing file: {}\n\t Ingest port base: {}",
         config->get_as<std::string>("file").value_or(""),
         config->get_as<std::uint16_t>("IngestBasePort").value_or(0));
-    auto _ = mTestingHelper.SetLoadingData(config->get_as<std::string>("file").value_or(""));
+    [[maybe_unused]] auto _ = mTestingHelper.SetLoadingData(config->get_as<std::string>("file").value_or(""));
     mIngestPort.Configure(config->get_as<std::uint16_t>("IngestBasePort").value_or(0));
   }
 
@@ -92,11 +108,12 @@ public:
     // co_await mInputs.ReadFromFile("../medium-plus-1");
     // co_await mInputs.ReadFromFile("../large");
     assert(mTestingHelper.IsLoadingData());
+    co_await mMetaData.Startup();
     co_await mWriter.Configure();
     mLoadingStarted = true;
     // co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
     // mInputs.ReadFromArrowFile(mTestingHelper.GetFilename());
-    co_await mInputs.ReadFromCapnpFile(mTestingHelper.GetFilename());
+    // co_await mInputs.ReadFromCapnpFile(mTestingHelper.GetFilename());
     // co_await mFileManager.SetDataFiles(4);
 
     mStarted = true;
@@ -170,47 +187,47 @@ public:
   //   co_return;
   // }
 
-  EventLoop::uio::task<> HandleCapnpIngestion() {
-    if (mStarted) {
-      auto batch = mInputs.GetCapReader();
-      std::string name;
-      name.reserve(255);
-      if (batch.has_value()) {
-        if (batch.value().size() == 0) {
-          mIngestionDone = true;
-          // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
-          mIngestionLatency = mTestingHelper.SetPrepareQuery();
-          mLogger->info("Ingestion took: {}", mIngestionLatency);
-          co_return;
-        }
-        capnp::FlatArrayMessageReader message(batch.value());
-        proto::Batch::Reader chunk = message.getRoot<proto::Batch>();
-        for (const proto::Batch::Message::Reader msg : chunk.getRecordings()) {
-          name = msg.getMetric();
-          name.append(",");
-          auto tags = msg.getTags();
-          std::for_each(tags.begin(), tags.end(), [&](proto::Tag::Reader tag) {
-            name.append(std::string{tag.getName().cStr()} + "=" + tag.getValue().cStr() + ",");
-          });
-          for (const proto::Batch::Message::Measurement::Reader measurement : msg.getMeasurements()) {
-            name.append(measurement.getName());
+  // EventLoop::uio::task<> HandleCapnpIngestion() {
+  //   if (mStarted) {
+  //     auto batch = mInputs.GetCapReader();
+  //     std::string name;
+  //     name.reserve(255);
+  //     if (batch.has_value()) {
+  //       if (batch.value().size() == 0) {
+  //         mIngestionDone = true;
+  //         // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
+  //         mIngestionLatency = mTestingHelper.SetPrepareQuery();
+  //         mLogger->info("Ingestion took: {}", mIngestionLatency);
+  //         co_return;
+  //       }
+  //       capnp::FlatArrayMessageReader message(batch.value());
+  //       proto::Batch::Reader chunk = message.getRoot<proto::Batch>();
+  //       for (const proto::Batch::Message::Reader msg : chunk.getRecordings()) {
+  //         name = msg.getMetric();
+  //         name.append(",");
+  //         auto tags = msg.getTags();
+  //         std::for_each(tags.begin(), tags.end(), [&](proto::Tag::Reader tag) {
+  //           name.append(std::string{tag.getName().cStr()} + "=" + tag.getValue().cStr() + ",");
+  //         });
+  //         for (const proto::Batch::Message::Measurement::Reader measurement : msg.getMeasurements()) {
+  //           name.append(measurement.getName());
 
-            ++mIngestionCounter;
+  //           ++mIngestionCounter;
 
-            mWriter.Insert(name, msg.getTimestamp(), measurement.getValue());
+  //           mWriter.Insert(name, msg.getTimestamp(), measurement.getValue());
 
-            name.resize(name.size() - measurement.getName().size());
-          }
-        }
-        name.clear();
-        mInputs.PushCapOffset(const_cast<capnp::word*>(message.getEnd()));
-      }
-    }
-    // if (!mLoadingStarted && mTestingHelper.IsLoadingData()) {
-    //   co_await IngestionTask();
-    // }
-    co_return;
-  }
+  //           name.resize(name.size() - measurement.getName().size());
+  //         }
+  //       }
+  //       name.clear();
+  //       mInputs.PushCapOffset(const_cast<capnp::word*>(message.getEnd()));
+  //     }
+  //   }
+  //   // if (!mLoadingStarted && mTestingHelper.IsLoadingData()) {
+  //   //   co_await IngestionTask();
+  //   // }
+  //   co_return;
+  // }
 
   // EventLoop::uio::task<> HandleIngestion() {
   //   if (mStarted) {
@@ -237,7 +254,7 @@ public:
   void OnEventLoopCallback() override {
     if (mTestingHelper.IsIngesting()) {
       // HandleIngestion();
-      HandleCapnpIngestion();
+      // HandleCapnpIngestion();
     }
 
     if ( // mIOQueue.size() == 0 &&
@@ -252,9 +269,17 @@ public:
       //                         "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
       std::string queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
                               "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
-      std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
+
+      mMetaData.ReloadIndexes();
+
+      auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
+      assert(tagRes.has_value());
+      mLogger->warn("tag; {}", fmt::join(tagRes.value(), ", "));
+      
+      // std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
+      std::optional<std::uint64_t> targetIndex = std::nullopt;
       // assert(targetIndex.has_value());
-      if(!targetIndex.has_value()) {
+      if (!targetIndex.has_value()) {
         mLogger->warn("Query target {} not found, skipping query test", queryTarget);
         mQueryLatency = mTestingHelper.Finalize();
         return;
@@ -386,18 +411,18 @@ private:
 
   DmaFile mTestFile;
   FileManager mFileManager;
-  ManagementPort mManagement;
-  IngestionPort<bufSize> mIngestPort;
-  int mIngestionMethod{-1};
-
+  MetaData mMetaData;
   Writer<bufSize> mWriter;
+  IngestionPort<bufSize> mIngestPort;
+  ManagementPort mManagement;
+  // int mIngestionMethod{-1};
 
   // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};
   // rigtorp::SPSCQueue<std::pair<EventLoop::SqeAwaitable, EventLoop::deferred_resolver>> mIOQueue{32};
   // rigtorp::SPSCQueue<EventLoop::deferred_resolver> mIOQueue{32};
   // std::deque<WriteOperation> mIOQueue{};
   bool mStarted{false};
-  bool mIngestionDone{false};
+  // bool mIngestionDone{false};
   bool mQueringDone{false};
   bool mQueryStarted{false};
   bool mDone{false};
@@ -409,7 +434,7 @@ private:
   std::uint64_t mIngestionLatency{0};
   std::uint64_t mQueryLatency{0};
 
-  InputManager mInputs;
+  // InputManager mInputs;
   // TimeTree<64> mTree;
   // std::unordered_map<std::string, MetricTree> mTrees;
   // std::unordered_map<std::uint64_t, MetricTree> mTrees;
@@ -439,30 +464,30 @@ private:
 //   std::shared_ptr<spdlog::logger> mLogger;
 // };
 
-class client: public Common::IStreamSocketHandler {
-public:
-  client(EventLoop::EventLoop& ev): mEv(ev), mSocket(ev, this) {
-    mLogger = mEv.RegisterLogger("TCPClient");
-    mSocket.Connect("127.0.0.1", 8080);
-  }
+// class client: public Common::IStreamSocketHandler {
+// public:
+//   client(EventLoop::EventLoop& ev): mEv(ev), mSocket(ev, this) {
+//     mLogger = mEv.RegisterLogger("TCPClient");
+//     mSocket.Connect("127.0.0.1", 8080);
+//   }
 
-  void OnConnected() final {
-    ::capnp::MallocMessageBuilder response;
-    proto::IdRequest::Builder request = response.initRoot<proto::IdRequest>();
-    // request.
+//   void OnConnected() final {
+//     ::capnp::MallocMessageBuilder response;
+//     proto::IdRequest::Builder request = response.initRoot<proto::IdRequest>();
+//     // request.
 
-    // mSocket.Send();
-  }
+//     // mSocket.Send();
+//   }
 
-  // void OnDisconnected([[maybe_unused]] Common::StreamSocket* conn) final {}
+//   // void OnDisconnected([[maybe_unused]] Common::StreamSocket* conn) final {}
 
-  void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, char* data, std::size_t len) final {}
+//   void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, char* data, std::size_t len) final {}
 
-private:
-  EventLoop::EventLoop& mEv;
-  Common::StreamSocket mSocket;
-  std::shared_ptr<spdlog::logger> mLogger;
-};
+// private:
+//   EventLoop::EventLoop& mEv;
+//   Common::StreamSocket mSocket;
+//   std::shared_ptr<spdlog::logger> mLogger;
+// };
 
 int main() {
   EventLoop::EventLoop loop;

@@ -20,6 +20,7 @@ add_executable(FrogFish
   SeriesIndex.hpp
   ManagementPort.hpp
   Writer.hpp
+  MetaData.hpp
 
   robin_hood.h
   IngestionProtocol/proto.capnp.h

@@ -3,6 +3,7 @@
 
 #include "InfluxParser.hpp"
 #include "IngestionProtocol/proto.capnp.h"
+#include "MetaData.hpp"
 #include "StreamSocket.h"
 
 #include <capnp/common.h>
@@ -12,7 +13,7 @@ class ManagementPort
 : public Common::IStreamSocketServerHandler
 , public Common::IStreamSocketHandler {
 public:
-  ManagementPort(EventLoop::EventLoop& ev, InputManager& index): mSocket(ev, this), mEv(ev), mIndex(index) {
+  ManagementPort(EventLoop::EventLoop& ev, MetaData& metadata): mSocket(ev, this), mEv(ev), mMetadata(metadata) {
     mSocket.BindAndListen(8080);
     mLogger = mEv.RegisterLogger("ManagementPort");
   }
@@ -33,24 +34,25 @@ public:
     proto::IdRequest::Reader managementMsg = msg.getRoot<proto::IdRequest>();
 
     // mLogger->info("Received management message, {} ()", managementMsg.getMetric().cStr());
-    std::string name;
-    name.reserve(255);
+    // std::string name;
+    // name.reserve(255);
 
-    auto tags = managementMsg.getTagSet();
-    std::for_each(tags.begin(), tags.end(), [&](proto::Tag::Reader tag) {
-      name.append(std::string{tag.getName().cStr()} + "=" + tag.getValue().cStr() + ",");
-    });
-    name.append(managementMsg.getMetric().cStr());
+    // auto tags = managementMsg.getTagSet();
+    // std::for_each(tags.begin(), tags.end(), [&](proto::Tag::Reader tag) {
+    //   name.append(std::string{tag.getName().cStr()} + "=" + tag.getValue().cStr() + ",");
+    // });
+    // name.append(managementMsg.getMetric().cStr());
 
     // std::uint64_t index = mIndex.InsertSeries(name);
-    std::optional<std::uint64_t> index = mIndex.GetIndex(name);
-    if(!index.has_value()) {
-      index = mIndex.InsertSeries(name);
-    }
+    // std::optional<std::uint64_t> index = mIndex.GetIndex(name);
+    // if(!index.has_value()) {
+    //   index = mIndex.InsertSeries(name);
+    // }
 
+    std::uint64_t index{mMetadata.GetIndex(managementMsg)};
     ::capnp::MallocMessageBuilder response;
     proto::IdResponse::Builder res = response.initRoot<proto::IdResponse>();
-    res.setSetId(index.value());
+    res.setSetId(index);
 
     auto encodedArray = capnp::messageToFlatArray(response);
     auto encodedArrayPtr = encodedArray.asChars();
@@ -66,7 +68,7 @@ private:
   Common::StreamSocketServer mSocket;
   EventLoop::EventLoop& mEv;
 
-  InputManager& mIndex;
+  MetaData& mMetadata;
 
   std::shared_ptr<spdlog::logger> mLogger;
 };

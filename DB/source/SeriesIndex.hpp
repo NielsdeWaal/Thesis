@@ -5,11 +5,10 @@
 #include "Query.hpp"
 #include "robin_hood.h"
 
-#include <tsl/htrie_map.h>
-
 #include <atomic>
 #include <memory>
 #include <string>
+#include <tsl/htrie_map.h>
 #include <unordered_map>
 
 class Index
@@ -111,7 +110,7 @@ public:
     return id;
   }
 
-  void OnCompletion(EventLoop::CompletionQueueEvent& cqe, const EventLoop::UserData* data) override {}
+  void OnCompletion([[maybe_unused]] EventLoop::CompletionQueueEvent& cqe, [[maybe_unused]] const EventLoop::UserData* data) override {}
 
 
   // [[nodiscard]] std::uint64_t
@@ -153,6 +152,10 @@ public:
     co_return;
   }
 
+  std::unordered_map<std::string, std::uint64_t>& GetIndexMapping() {
+    return mIndex;
+  }
+
   bool StartupDone() const {
     return mStartupDone;
   }
@@ -173,9 +176,9 @@ private:
   std::uint64_t mLogFileOffset{0};
   bool mStartupDone{false};
 
-  // std::unordered_map<std::string, std::uint64_t> mIndex{};
+  std::unordered_map<std::string, std::uint64_t> mIndex{};
   // tsl::htrie_map<std::string, std::uint64_t> mIndex{};
-  tsl::htrie_map<char, std::uint64_t> mIndex{};
+  // tsl::htrie_map<char, std::uint64_t> mIndex{};
   // robin_hood::unordered_flat_map<std::string, std::uint64_t> mIndex{};
 
   std::vector<IOOP> mInFlightIO{};

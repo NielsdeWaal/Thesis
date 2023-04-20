@@ -42,7 +42,7 @@ public:
     double timeTakenS = duration / 1000000000.;
     double rateS = ingestCount / timeTakenS;
     double dataRate = (rateS * 128) / 1000000;
-    mLogger->info("Ingested {} points in {}s, rate: {}MB/s / {} points/sec", ingestCount, timeTakenS, dataRate, rateS);
+    // mLogger->info("Ingested {} points in {}s, rate: {}MB/s / {} points/sec", ingestCount, timeTakenS, dataRate, rateS);
   }
 
 private:

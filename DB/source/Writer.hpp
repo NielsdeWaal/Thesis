@@ -5,6 +5,7 @@
 #include "File.h"
 #include "InfluxParser.hpp"
 #include "MemTable.hpp"
+#include "MetaData.hpp"
 #include "src/TimeTree.hpp"
 
 #include <cstdint>
@@ -18,12 +19,12 @@ struct LogPoint {
 
 template<std::size_t bufSize> class Writer: public EventLoop::IEventLoopCallbackHandler {
 public:
-  Writer(EventLoop::EventLoop& ev, InputManager& inputs, std::size_t maxOutstanding)
+  Writer(EventLoop::EventLoop& ev, MetaData& metadata, std::size_t maxOutstanding)
   : mEv(ev)
   , mLogFile(mEv)
   , mNodeFile(mEv)
   , mMaxOutstandingIO(maxOutstanding)
-  , mInputs(inputs) {
+  , mMetadata(metadata) {
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     mLogger = mEv.RegisterLogger("Writer");
   }
@@ -63,15 +64,16 @@ public:
     }
   }
 
-  void Insert(const std::string& name, std::uint64_t ts, std::int64_t value) {
-    int index{0};
-    if (auto nameIndex = mInputs.GetIndex(name); nameIndex.has_value()) {
-      index = nameIndex.value();
-    } else {
-      index = mInputs.InsertSeries(name);
-    }
-    WriteToIndex(index, ts, value);
-  }
+  // void Insert(const std::string& name, std::uint64_t ts, std::int64_t value) {
+    // int index{0};
+    // if (auto nameIndex = mInputs.GetIndex(name); nameIndex.has_value()) {
+    //   index = nameIndex.value();
+    // } else {
+    //   index = mInputs.InsertSeries(name);
+    // }
+  //   int index = mMetadata.Insert(const int &tags)
+  //   WriteToIndex(index, ts, value);
+  // }
 
   void Insert(std::uint64_t index, std::uint64_t ts, std::int64_t value) {
     WriteToIndex(index, ts, value);
@@ -191,7 +193,7 @@ private:
   std::uint64_t mOutstandingIO{0};
   std::size_t mMaxOutstandingIO{0};
 
-  InputManager& mInputs;
+  MetaData& mMetadata;
   std::deque<WriteOperation> mIOQueue{};
 };
 
