@@ -74,7 +74,7 @@ public:
           mInvertedIndex.Insert({kv.front(), kv.at(1)}, v);
         } else {
           // spdlog::info("Metric: {}", kv.front());
-          mMetricMap.insert({kv.front(), v});
+          mMetricMap.insert({v, kv.front()});
         }
         // spdlog::info("Mapped {} to {}", tag, v);
       }
@@ -185,7 +185,8 @@ private:
   // FIXME a sorted vector combined with `set_intersection` provides better performance
   // std::vector<TSTag> mTagSet;
   // std::unordered_set<TSTag> mTags;
-  std::unordered_map<std::string, std::uint64_t> mMetricMap;
+  // std::unordered_map<std::string, std::uint64_t> mMetricMap;
+  std::unordered_map<std::uint64_t, std::string> mMetricMap;
   InvertedIndex mInvertedIndex;
   std::unordered_map<std::uint64_t, std::vector<const TSTag*>> mIdTagMap;
   Index mIdIndex;
