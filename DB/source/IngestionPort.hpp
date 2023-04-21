@@ -33,7 +33,7 @@ public:
     // auto msgs = insertMsg.getRecordings();
     for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
       // mLogger->info("Received insert for tag: {}", batch.getTag());
-      for(const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
+      for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
         mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
         ++ingestCount;
       }
@@ -42,7 +42,8 @@ public:
     double timeTakenS = duration / 1000000000.;
     double rateS = ingestCount / timeTakenS;
     double dataRate = (rateS * 128) / 1000000;
-    // mLogger->info("Ingested {} points in {}s, rate: {}MB/s / {} points/sec", ingestCount, timeTakenS, dataRate, rateS);
+    // mLogger->info("Ingested {} points in {}s, rate: {}MB/s / {} points/sec", ingestCount, timeTakenS, dataRate,
+    // rateS);
   }
 
 private:

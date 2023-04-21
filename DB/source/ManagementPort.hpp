@@ -19,7 +19,7 @@ public:
   }
 
   Common::IStreamSocketHandler* OnIncomingConnection() override {
-    return this;
+    return static_cast<Common::IStreamSocketHandler*>(this);
   }
 
   void OnConnected() final {}
@@ -56,11 +56,11 @@ public:
 
     auto encodedArray = capnp::messageToFlatArray(response);
     auto encodedArrayPtr = encodedArray.asChars();
-    auto encodedCharArray= encodedArrayPtr.begin();
+    auto encodedCharArray = encodedArrayPtr.begin();
     auto size = encodedArrayPtr.size();
 
     conn->Send(encodedCharArray, size);
-    
+
     // conn->Shutdown();
   }
 
