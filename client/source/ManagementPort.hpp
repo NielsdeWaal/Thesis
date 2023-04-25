@@ -49,7 +49,7 @@ public:
     mInprogressRequests.erase(mRequestMapping[managementMsg.getIdentifier()]);
     mRequestMapping.erase(managementMsg.getIdentifier());
 
-    if(mInprogressRequests.empty()) {
+    if (mInprogressRequests.empty()) {
       mLogger->info("No more in progress requests");
     } else {
       mLogger->info("Still in progress: {}", fmt::join(mInprogressRequests, ",\n "));
