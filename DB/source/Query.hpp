@@ -60,7 +60,7 @@ public:
     return mDone;
   }
 
-  void OnCompletion(EventLoop::CompletionQueueEvent& cqe, const EventLoop::UserData* data) override {
+  void OnCompletion([[maybe_unused]] EventLoop::CompletionQueueEvent& cqe, [[maybe_unused]] const EventLoop::UserData* data) override {
     // const EventLoop::READ readOperation = static_cast<EventLoop::READ>(std::get<EventLoop::READ>(data->mInfo));
     // std::size_t removed = std::erase_if(mInFlightIO, [&readOperation](const IOOP& op) {
     //   return op.pos == readOperation.pos;

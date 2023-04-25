@@ -27,13 +27,13 @@ public:
   void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
 
   void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, char* data, std::size_t len) final {
-    auto buf = std::aligned_alloc(len, 512);
+    auto buf = std::aligned_alloc(512, len);
     std::memcpy(buf, data, len);
     auto pdata = kj::arrayPtr(( const capnp::word* ) buf, len / sizeof(capnp::word));
     capnp::FlatArrayMessageReader msg{pdata};
     proto::IdRequest::Reader managementMsg = msg.getRoot<proto::IdRequest>();
 
-    // mLogger->info("Received management message, {} ()", managementMsg.getMetric().cStr());
+    mLogger->info("Received management message, {} (id: {})", managementMsg.getMetric().cStr(), managementMsg.getIdentifier());
     // std::string name;
     // name.reserve(255);
 
@@ -53,6 +53,7 @@ public:
     ::capnp::MallocMessageBuilder response;
     proto::IdResponse::Builder res = response.initRoot<proto::IdResponse>();
     res.setSetId(index);
+    res.setIdentifier(managementMsg.getIdentifier());
 
     auto encodedArray = capnp::messageToFlatArray(response);
     auto encodedArrayPtr = encodedArray.asChars();

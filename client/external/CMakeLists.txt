@@ -129,12 +129,6 @@ FetchContent_Declare(
   GIT_TAG origin/development
 )
 FetchContent_Declare(
-  TimeTree
-  
-  GIT_REPOSITORY git@github.com:NielsdeWaal/TimeTree.git
-  GIT_TAG origin/master
-)
-FetchContent_Declare(
     fmt
 
     GIT_REPOSITORY git@github.com:fmtlib/fmt.git
@@ -160,14 +154,7 @@ FetchContent_Declare(
     URL https://lexy.foonathan.net/download/lexy-src.zip
 )
 
-FetchContent_Declare(
-    tsl_hat_trie
-
-    GIT_REPOSITORY git@github.com:Tessil/hat-trie.git
-    GIT_TAG v0.6.0
-)
-
-FetchContent_MakeAvailable(CommonLibs TimeTree fmt lexy tsl_hat_trie)
+FetchContent_MakeAvailable(CommonLibs fmt lexy)
 # set_target_properties(EventLoop PROPERTIES IMPORTED_LOCATION k)
 # link_directories(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)
 # add_subdirectory(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)
