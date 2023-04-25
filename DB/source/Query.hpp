@@ -60,7 +60,9 @@ public:
     return mDone;
   }
 
-  void OnCompletion([[maybe_unused]] EventLoop::CompletionQueueEvent& cqe, [[maybe_unused]] const EventLoop::UserData* data) override {
+  void OnCompletion(
+      [[maybe_unused]] EventLoop::CompletionQueueEvent& cqe,
+      [[maybe_unused]] const EventLoop::UserData* data) override {
     // const EventLoop::READ readOperation = static_cast<EventLoop::READ>(std::get<EventLoop::READ>(data->mInfo));
     // std::size_t removed = std::erase_if(mInFlightIO, [&readOperation](const IOOP& op) {
     //   return op.pos == readOperation.pos;
@@ -83,9 +85,6 @@ private:
 };
 
 class QueryBuilder {};
-
-class QueryManager {};
-
 namespace SeriesQuery {
   template<typename T> class box {
     // Wrapper over unique_ptr.
@@ -123,16 +122,23 @@ namespace SeriesQuery {
   };
 
   struct UnsignedLiteralExpr {
-    UnsignedLiteralExpr(std::uint64_t val) : value(val) {}
+    UnsignedLiteralExpr(std::uint64_t val): value(val) {}
     std::uint64_t value;
   };
 
   struct SignedLiteralExpr {
-    SignedLiteralExpr(std::int64_t val) : value(val) {}
+    SignedLiteralExpr(std::int64_t val): value(val) {}
     std::int64_t value;
   };
 
-  using Expr = std::variant<UnsignedLiteralExpr, SignedLiteralExpr, box<struct EqExpr>, box<struct OrExpr>, box<struct AndExpr>, box<struct GtExpr>, box<struct LtExpr>>;
+  using Expr = std::variant<
+      UnsignedLiteralExpr,
+      SignedLiteralExpr,
+      box<struct EqExpr>,
+      box<struct OrExpr>,
+      box<struct AndExpr>,
+      box<struct GtExpr>,
+      box<struct LtExpr>>;
 
   struct EqExpr {
     Expr lhs, rhs;
@@ -198,5 +204,13 @@ namespace SeriesQuery {
   }
 
 } // namespace SeriesQuery
+
+// TODO
+// Check this regex: [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
+class QueryManager {
+public:
+  QueryManager() = default;
+};
+
 
 #endif // __QUERY
