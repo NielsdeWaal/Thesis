@@ -13,17 +13,18 @@
 #include <thread>
 #include <utility>
 
-class FrogFishClient : public EventLoop::IEventLoopCallbackHandler, public Common::IUDPSocketHandler {
+class FrogFishClient
+: public EventLoop::IEventLoopCallbackHandler
+, public Common::IUDPSocketHandler {
 public:
-  FrogFishClient(EventLoop::EventLoop &ev) : mEv(ev), mManagementPort(mEv), mDataPort(ev, this) {
+  FrogFishClient(EventLoop::EventLoop& ev): mEv(ev), mManagementPort(mEv), mDataPort(ev, this) {
     mLogger = mEv.RegisterLogger("FrogFishClient");
     mEv.RegisterCallbackHandler(this, EventLoop::EventLoop::LatencyType::Low);
   }
 
   void Configure() {
     auto config = mEv.GetConfigTable("Client");
-    std::string filename(
-        config->get_as<std::string>("TestingFile").value_or(""));
+    std::string filename(config->get_as<std::string>("TestingFile").value_or(""));
     int fd = open(filename.c_str(), O_RDONLY);
     if (fd == ENOENT) {
       mLogger->error("Failed to open {}, no such file", filename);
@@ -32,6 +33,7 @@ public:
     }
     mCapWrapper = std::make_unique<CapnpWrapper>(fd);
     mManagementPort.Connect(
+        config->get_as<std::string>("DatabaseHost").value_or("127.0.0.1"),
         config->get_as<std::uint16_t>("ManagementPort").value_or(0));
     mLogger->info("Started client");
   }
@@ -51,37 +53,33 @@ public:
   //   the send batches.
 
   void OnEventLoopCallback() {
-    if (!mWaiting) {
+    if (mDataBatches.empty() && mTaggedDataBatches.empty()) {
       auto batch = mCapWrapper->words;
       using namespace std::chrono_literals;
       if (batch.size() == 0) {
         mLogger->info("Ingestion done");
+        exit(0);
         return;
       }
       capnp::FlatArrayMessageReader message(batch);
       proto::Batch::Reader chunk = message.getRoot<proto::Batch>();
       for (const proto::Batch::Message::Reader msg : chunk.getRecordings()) {
         // mLogger->info("Ingesting: {}", name);
-        for (const proto::Batch::Message::Measurement::Reader measurement :
-             msg.getMeasurements()) {
+        for (const proto::Batch::Message::Measurement::Reader measurement : msg.getMeasurements()) {
           std::uint64_t index = mManagementPort.GetTagSetId(msg, measurement);
           if (index == 0) {
             std::string tagSet;
             tagSet.reserve(255);
-            ::capnp::List<::proto::Tag, ::capnp::Kind::STRUCT>::Reader tags =
-                msg.getTags();
-            std::for_each(tags.begin(), tags.end(),
-                          [&](proto::Tag::Reader tag) {
-                            tagSet.append(std::string{tag.getName().cStr()} +
-                                          "=" + tag.getValue().cStr() + ",");
-                          });
+            ::capnp::List<::proto::Tag, ::capnp::Kind::STRUCT>::Reader tags = msg.getTags();
+            std::for_each(tags.begin(), tags.end(), [&](proto::Tag::Reader tag) {
+              tagSet.append(std::string{tag.getName().cStr()} + "=" + tag.getValue().cStr() + ",");
+            });
             tagSet.append(measurement.getName());
-            mDataBatches[tagSet].push_back(
-                {msg.getTimestamp(), measurement.getValue()});
-            mWaiting = true;
+            mDataBatches[tagSet].push_back({msg.getTimestamp(), measurement.getValue()});
+            // mWaiting = true;
           } else {
-            mTaggedDataBatches[index].push_back(
-                {msg.getTimestamp(), measurement.getValue()});
+            // mLogger->info("Known tag");
+            mTaggedDataBatches[index].push_back({msg.getTimestamp(), measurement.getValue()});
           }
           // name.append(measurement.getName());
           // std::this_thread::sleep_for(1000ms);
@@ -93,9 +91,9 @@ public:
           // name.resize(name.size() - measurement.getName().size());
         }
       }
+      mCapWrapper->words = kj::arrayPtr(const_cast<capnp::word*>(message.getEnd()), mCapWrapper->words.end());
     }
-    if (mWaiting && mManagementPort.RequestsDone() &&
-        (!mDataBatches.empty() || !mTaggedDataBatches.empty())) {
+    if (mManagementPort.RequestsDone() && (!mDataBatches.empty() || !mTaggedDataBatches.empty())) {
       // mLogger->info("Got all tag ids");
       // mWaiting = false;
 
@@ -115,23 +113,22 @@ public:
         //              proto::InsertionBatch::Message>::Builder::Iterator>
         //          i(mDataBatches.begin(), messages.begin());
         //      i.first != mDataBatches.end(); ++i.first, ++i.second) {
-        for(auto [k, v] : mDataBatches) {
+        for (auto [k, v] : mDataBatches) {
           ::capnp::MallocMessageBuilder ingestMessage;
-          proto::InsertionBatch::Builder batch =
-              ingestMessage.initRoot<proto::InsertionBatch>();
-          ::capnp::List<proto::InsertionBatch::Message>::Builder messages =
-              batch.initRecordings(1);
+          proto::InsertionBatch::Builder batch = ingestMessage.initRoot<proto::InsertionBatch>();
+          ::capnp::List<proto::InsertionBatch::Message>::Builder messages = batch.initRecordings(1);
           // ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder
           //     measurements = i.second->initMeasurements(i.first->second.size());
-          ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder
-              measurements = messages[0].initMeasurements(v.size());
+          ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder measurements =
+              messages[0].initMeasurements(v.size());
+          messages[0].setTag(mManagementPort.GetTagForName(k));
 
-          for (std::pair<std::vector<
-                             std::pair<std::uint64_t, std::int64_t>>::iterator,
-                         ::capnp::List<proto::InsertionBatch::Message::
-                                           Measurement>::Builder::Iterator>
+          for (std::pair<
+                   std::vector<std::pair<std::uint64_t, std::int64_t>>::iterator,
+                   ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder::Iterator>
                    j(v.begin(), measurements.begin());
-               j.first != v.end(); ++j.first, ++j.second) {
+               j.first != v.end();
+               ++j.first, ++j.second) {
             j.second->setTimestamp(j.first->first);
             j.second->setValue(j.first->second);
           }
@@ -140,7 +137,7 @@ public:
           auto encodedCharArray = encodedArrayPtr.begin();
           auto size = encodedArrayPtr.size();
 
-          mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
+          // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
           mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
         }
 
@@ -154,13 +151,46 @@ public:
         mDataBatches.clear();
         return;
       } else {
+        // mLogger->info("Data batch TODO");
+        for (auto [k, v] : mTaggedDataBatches) {
+          ::capnp::MallocMessageBuilder ingestMessage;
+          proto::InsertionBatch::Builder batch = ingestMessage.initRoot<proto::InsertionBatch>();
+          ::capnp::List<proto::InsertionBatch::Message>::Builder messages = batch.initRecordings(1);
+          // ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder
+          //     measurements = i.second->initMeasurements(i.first->second.size());
+          ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder measurements =
+              messages[0].initMeasurements(v.size());
+          messages[0].setTag(k);
+
+          for (std::pair<
+                   std::vector<std::pair<std::uint64_t, std::int64_t>>::iterator,
+                   ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder::Iterator>
+                   j(v.begin(), measurements.begin());
+               j.first != v.end();
+               ++j.first, ++j.second) {
+            j.second->setTimestamp(j.first->first);
+            j.second->setValue(j.first->second);
+          }
+          auto encodedArray = capnp::messageToFlatArray(ingestMessage);
+          auto encodedArrayPtr = encodedArray.asChars();
+          auto encodedCharArray = encodedArrayPtr.begin();
+          auto size = encodedArrayPtr.size();
+
+          // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
+          mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
+        }
 
         return;
       }
 
+      if (mDataBatches.empty() && mTaggedDataBatches.empty()) {
+        mLogger->info("Send all data to DB, read more data");
+        // mWaiting = false;
+        // const_cast<capnp::word*>(message.getEnd())
+        // mCapWrapper->words = kj::arrayPtr(end, mCapWrapper->words.end());
+      }
+
       // TODO push capnp offset
-      // const_cast<capnp::word*>(message.getEnd())
-      // mCapWrapper->words = kj::arrayPtr(end, mCapWrapper->words.end());
     }
   }
 
@@ -172,30 +202,25 @@ private:
       struct stat stats;
       ::fstat(fd, &stats);
       std::size_t size = stats.st_size;
-      void *data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+      void* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
       if (data == MAP_FAILED) {
         spdlog::critical("Failed to mmap");
       }
       ::madvise(data, size, MADV_SEQUENTIAL);
 
-      words = kj::ArrayPtr<capnp::word>(reinterpret_cast<capnp::word *>(data),
-                                        size / sizeof(capnp::word));
+      words = kj::ArrayPtr<capnp::word>(reinterpret_cast<capnp::word*>(data), size / sizeof(capnp::word));
     }
 
     kj::ArrayPtr<capnp::word> words;
   };
 
-  EventLoop::EventLoop &mEv;
+  EventLoop::EventLoop& mEv;
   ManagementPort mManagementPort;
   Common::UDPSocket mDataPort;
 
   bool mWaiting{false};
-  std::unordered_map<std::string,
-                     std::vector<std::pair<std::uint64_t, std::int64_t>>>
-      mDataBatches;
-  std::unordered_map<std::uint64_t,
-                     std::vector<std::pair<std::uint64_t, std::int64_t>>>
-      mTaggedDataBatches;
+  std::unordered_map<std::string, std::vector<std::pair<std::uint64_t, std::int64_t>>> mDataBatches;
+  std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint64_t, std::int64_t>>> mTaggedDataBatches;
 
   // capnp related parameters
   std::unique_ptr<CapnpWrapper> mCapWrapper;
