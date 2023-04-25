@@ -65,20 +65,20 @@ for batch in batch_capnp.Batch.read_multiple(f):
     # print(sendBatch)
     insertMsg = batch_capnp.InsertionBatch.new_message()
     group = []
-    recording = insertMsg.init('recordings', 8)
+    recording = insertMsg.init('recordings', 4)
     iter = 0
     for i, (k, v) in enumerate(sendBatch.items()):
         # recording = insertMsg.init('recordings', 1) # TODO move out of loop as multple groups can be send in one request
-        recording[i%8].tag = nameMap[k]
-        values = recording[i%8].init('measurements', len(v["data"]))
+        recording[i%4].tag = nameMap[k]
+        values = recording[i%4].init('measurements', len(v["data"]))
         for val, measurement in zip(values, v["data"]):
             val.timestamp = measurement["ts"]
             val.value = measurement["val"]
 
         # print(len(insertMsg.to_bytes()))
-        if i%8 == 0 and i != 0:
+        if i%4 == 0 and i != 0:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
             sock.sendto(insertMsg.to_bytes(), ("127.0.0.1", 1337))
             insertMsg = batch_capnp.InsertionBatch.new_message()
-            recording = insertMsg.init('recordings', 8)
+            recording = insertMsg.init('recordings', 4)
         # time.sleep(1)
