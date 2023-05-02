@@ -7,6 +7,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <regex>
+#include <spdlog/spdlog.h>
 #include <vector>
 
 // TODO there is an opportunity to do coalessing on the reads here
@@ -85,131 +87,222 @@ private:
 };
 
 class QueryBuilder {};
-namespace SeriesQuery {
-  template<typename T> class box {
-    // Wrapper over unique_ptr.
-    std::unique_ptr<T> _impl;
+// namespace SeriesQuery {
+//   template<typename T> class box {
+//     // Wrapper over unique_ptr.
+//     std::unique_ptr<T> _impl;
 
-  public:
-    // Automatic construction from a `T`, not a `T*`.
-    box(T&& obj): _impl(new T(std::move(obj))) {}
-    box(const T& obj): _impl(new T(obj)) {}
+//   public:
+//     // Automatic construction from a `T`, not a `T*`.
+//     box(T&& obj): _impl(new T(std::move(obj))) {}
+//     box(const T& obj): _impl(new T(obj)) {}
 
-    // Copy constructor copies `T`.
-    box(const box& other): box(*other._impl) {}
-    box& operator=(const box& other) {
-      *_impl = *other._impl;
-      return *this;
-    }
+//     // Copy constructor copies `T`.
+//     box(const box& other): box(*other._impl) {}
+//     box& operator=(const box& other) {
+//       *_impl = *other._impl;
+//       return *this;
+//     }
 
-    // unique_ptr destroys `T` for us.
-    ~box() = default;
+//     // unique_ptr destroys `T` for us.
+//     ~box() = default;
 
-    // Access propagates constness.
-    T& operator*() {
-      return *_impl;
-    }
-    const T& operator*() const {
-      return *_impl;
-    }
+//     // Access propagates constness.
+//     T& operator*() {
+//       return *_impl;
+//     }
+//     const T& operator*() const {
+//       return *_impl;
+//     }
 
-    T* operator->() {
-      return _impl.get();
-    }
-    const T* operator->() const {
-      return _impl.get();
-    }
-  };
+//     T* operator->() {
+//       return _impl.get();
+//     }
+//     const T* operator->() const {
+//       return _impl.get();
+//     }
+//   };
 
-  struct UnsignedLiteralExpr {
-    UnsignedLiteralExpr(std::uint64_t val): value(val) {}
-    std::uint64_t value;
-  };
+//   struct UnsignedLiteralExpr {
+//     UnsignedLiteralExpr(std::uint64_t val): value(val) {}
+//     std::uint64_t value;
+//   };
 
-  struct SignedLiteralExpr {
-    SignedLiteralExpr(std::int64_t val): value(val) {}
-    std::int64_t value;
-  };
+//   struct SignedLiteralExpr {
+//     SignedLiteralExpr(std::int64_t val): value(val) {}
+//     std::int64_t value;
+//   };
 
-  using Expr = std::variant<
-      UnsignedLiteralExpr,
-      SignedLiteralExpr,
-      box<struct EqExpr>,
-      box<struct OrExpr>,
-      box<struct AndExpr>,
-      box<struct GtExpr>,
-      box<struct LtExpr>>;
+//   using Expr = std::variant<
+//       UnsignedLiteralExpr,
+//       SignedLiteralExpr,
+//       box<struct EqExpr>,
+//       box<struct OrExpr>,
+//       box<struct AndExpr>,
+//       box<struct GtExpr>,
+//       box<struct LtExpr>>;
 
-  struct EqExpr {
-    Expr lhs, rhs;
-  };
+//   struct EqExpr {
+//     Expr lhs, rhs;
+//   };
 
-  struct OrExpr {
-    Expr lhs, rhs;
-  };
+//   struct OrExpr {
+//     Expr lhs, rhs;
+//   };
 
-  struct AndExpr {
-    Expr lhs, rhs;
-  };
+//   struct AndExpr {
+//     Expr lhs, rhs;
+//   };
 
-  struct GtExpr {
-    Expr lhs, rhs;
-  };
+//   struct GtExpr {
+//     Expr lhs, rhs;
+//   };
 
-  struct LtExpr {
-    Expr lhs, rhs;
-  };
+//   struct LtExpr {
+//     Expr lhs, rhs;
+//   };
 
-  bool evaluate(const Expr& expr) {
-    struct visitor {
-      std::uint64_t operator()(const UnsignedLiteralExpr& expr) {
-        return expr.value;
-      }
+//   bool evaluate(const Expr& expr) {
+//     struct visitor {
+//       std::uint64_t operator()(const UnsignedLiteralExpr& expr) {
+//         return expr.value;
+//       }
 
-      std::uint64_t operator()(const SignedLiteralExpr& expr) {
-        return expr.value;
-      }
+//       std::uint64_t operator()(const SignedLiteralExpr& expr) {
+//         return expr.value;
+//       }
 
-      std::uint64_t operator()(const box<EqExpr>& expr) {
-        auto lhs = std::visit(*this, expr->lhs);
-        auto rhs = std::visit(*this, expr->rhs);
-        return lhs == rhs;
-      }
+//       std::uint64_t operator()(const box<EqExpr>& expr) {
+//         auto lhs = std::visit(*this, expr->lhs);
+//         auto rhs = std::visit(*this, expr->rhs);
+//         return lhs == rhs;
+//       }
 
-      std::uint64_t operator()(const box<OrExpr>& expr) {
-        auto lhs = std::visit(*this, expr->lhs);
-        auto rhs = std::visit(*this, expr->rhs);
-        return lhs || rhs;
-      }
+//       std::uint64_t operator()(const box<OrExpr>& expr) {
+//         auto lhs = std::visit(*this, expr->lhs);
+//         auto rhs = std::visit(*this, expr->rhs);
+//         return lhs || rhs;
+//       }
 
-      std::uint64_t operator()(const box<AndExpr>& expr) {
-        auto lhs = std::visit(*this, expr->lhs);
-        auto rhs = std::visit(*this, expr->rhs);
-        return lhs && rhs;
-      }
+//       std::uint64_t operator()(const box<AndExpr>& expr) {
+//         auto lhs = std::visit(*this, expr->lhs);
+//         auto rhs = std::visit(*this, expr->rhs);
+//         return lhs && rhs;
+//       }
 
-      std::uint64_t operator()(const box<GtExpr>& expr) {
-        auto lhs = std::visit(*this, expr->lhs);
-        auto rhs = std::visit(*this, expr->rhs);
-        return lhs > rhs;
-      }
-      std::uint64_t operator()(const box<LtExpr>& expr) {
-        auto lhs = std::visit(*this, expr->lhs);
-        auto rhs = std::visit(*this, expr->rhs);
-        return lhs < rhs;
-      }
-    };
+//       std::uint64_t operator()(const box<GtExpr>& expr) {
+//         auto lhs = std::visit(*this, expr->lhs);
+//         auto rhs = std::visit(*this, expr->rhs);
+//         return lhs > rhs;
+//       }
+//       std::uint64_t operator()(const box<LtExpr>& expr) {
+//         auto lhs = std::visit(*this, expr->lhs);
+//         auto rhs = std::visit(*this, expr->rhs);
+//         return lhs < rhs;
+//       }
+//     };
 
-    return std::visit(visitor{}, expr);
-  }
+//     return std::visit(visitor{}, expr);
+//   }
 
-} // namespace SeriesQuery
+// } // namespace SeriesQuery
 
-// TODO
-// Check this regex: [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
 class QueryManager {
 public:
-  QueryManager() = default;
+  QueryManager(EventLoop::EventLoop& ev): mEv(ev) {
+    mLogger = mEv.RegisterLogger("QueryManager");
+  }
+
+  // void CreateQuery(const std::string& query) {
+  //   //  [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
+  //   // std::regex parser(R"[\s,]*(~@|[\[\]{}()'`~^@]|\"(\?:\\.|[\^\\\"])*\"?|;.*|[^\s\[\]{}('\"`,;)]*)");
+  //   std::regex parser("[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\\\.|[^\\\\\"])*\"?|;.*|[^\s\\[\\]{}('\"`,;)]*)");
+  //   std::vector<std::string> atoms(std::sregex_token_iterator(query.begin(), query.end(), parser, -1), {});
+  //   mLogger->info("Parsed query into: size: {}", atoms.size());
+  //   for (const auto& str : atoms) {
+  //     mLogger->warn("{}", str);
+  //   }
+  // }
+
+  void Parse(std::string_view buf);
+
+private:
+  class ExpressionInterface {};
+  class Integer {
+  public: 
+    Integer(int val): value(val) {}
+  private: 
+    int value;
+  };
+
+  class IndexExpression {
+  public:
+    void AddIndex(std::string_view index) {
+      mTargetIndex.push_back(index);
+    }
+    void Add(std::string_view index) {
+      mTargetIndex.push_back(index);
+    }
+
+    std::vector<std::string_view> GetTarget() const {
+      return mTargetIndex;
+    }
+
+  private:
+    std::vector<std::string_view> mTargetIndex;
+  };
+
+  struct ListExpression {
+    void Add(std::string_view val) {
+      mListItems.push_back(val);
+    }
+    void Add(Integer val) {
+      mListItems.push_back(val);
+    }
+    std::vector<std::variant<std::string_view, Integer>> mListItems;
+  };
+
+  class QueryExpression {
+  public:
+    void SetIndex(std::string_view index) {
+      mTargetIndex = index;
+    }
+
+    void add(Integer val) {
+      mTargetIndex = val;
+    }
+
+  private:
+    std::variant<std::string_view, Integer> mTargetIndex;
+  };
+
+
+  struct Expression {
+    using ExpressionT = std::variant<QueryExpression, IndexExpression, ListExpression, Integer>;
+
+    Expression(const ExpressionT& arg) : expr(arg) {}
+
+    void Add(ExpressionT& arg) {
+      std::visit([&arg](auto& expr){expr.add(arg);});
+    }
+
+    ExpressionT expr;
+  };
+
+  inline std::tuple<std::string_view, std::size_t, bool> next_token(std::string_view buff);
+  inline std::tuple<int, bool> integer(std::string_view token);
+
+  void EvaluateStack(
+      std::stack<Expression*>& stack,
+      std::vector<std::unordered_map<std::string_view, std::string>> variables);
+
+  EventLoop::EventLoop& mEv;
+
+  std::deque<Expression> mExpressions;
+  std::stack<Expression*> mParseStack;
+  std::vector<std::unordered_map<std::string_view, std::string>> mScopedVars;
+
+  std::shared_ptr<spdlog::logger> mLogger;
 };
 
 

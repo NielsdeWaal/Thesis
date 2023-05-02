@@ -65,7 +65,8 @@ public:
   , mMetaData(mEv)
   , mWriter(mEv, mMetaData, maxOutstandingIO)
   , mIngestPort(mEv, mWriter)
-  , mManagement(mEv, mMetaData) {
+  , mManagement(mEv, mMetaData) 
+  , mQueryManager(mEv) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
@@ -261,13 +262,20 @@ public:
         mWriter.GetOutstandingIO() == 0 && mTestingHelper.IsPreparingQuery()) {
       mLogger->info("Testing queries");
 
+      // mQueryManager.CreateQuery("(+ 1234 123)");
+      // mQueryManager.Parse("(+ 1234 (* 1 2))");
+      mQueryManager.Parse("(->> (index 50))");
+      mQueryManager.Parse("(->> (index (list 1 2)))");
+      mQueryManager.Parse("(->> (index 'usage_user'))");
+      // mQueryManager.Parse("(->> (tag 'hostname'))");
+
       // std::string queryTarget{
       //     "cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,arch=x86,team=SF,"
       //     "service=19,service_version=1,service_environment=test,usage_guest_nice"};
       // std::string
       // queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
       //                         "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
-      std::string queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
+      std::string queryTarget{"hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
                               "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
 
       mMetaData.ReloadIndexes();
@@ -301,12 +309,12 @@ public:
 
       mLogger->info("Query requires {} reads, starting...", addrs.size());
 
-      auto filter = [](SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
-        using namespace SeriesQuery;
-        return evaluate(
-            Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1452606760000000000}}, GtExpr{val, SignedLiteralExpr{99}}}));
-      };
-      mTestingHelper.SetQuerying(queryTarget, filter);
+      // auto filter = [](SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
+      //   using namespace SeriesQuery;
+      //   return evaluate(
+      //       Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1452606760000000000}}, GtExpr{val, SignedLiteralExpr{99}}}));
+      // };
+      // mTestingHelper.SetQuerying(queryTarget, filter);
 
       // TODO support multiple starting multiple queries
       mRunningQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize);
@@ -328,14 +336,14 @@ public:
           for (EventLoop::DmaBuffer& buf : resultBuffers) {
             DataPoint* points = ( DataPoint* ) buf.GetPtr();
 
-            using namespace SeriesQuery;
+            // using namespace SeriesQuery;
 
-            // memtableSize is the size of the buffer when seen as an array of DataPoint's
-            for (std::size_t i = 0; i < memtableSize; ++i) {
-              if (mTestingHelper.ExecFilter(points[i].timestamp, points[i].value)) {
-                mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
-              }
-            }
+            // // memtableSize is the size of the buffer when seen as an array of DataPoint's
+            // for (std::size_t i = 0; i < memtableSize; ++i) {
+            //   if (mTestingHelper.ExecFilter(points[i].timestamp, points[i].value)) {
+            //     mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+            //   }
+            // }
           }
 
           std::erase(mRunningQueries, op);
@@ -415,6 +423,7 @@ private:
   Writer<bufSize> mWriter;
   IngestionPort<bufSize> mIngestPort;
   ManagementPort mManagement;
+  QueryManager mQueryManager;
   // int mIngestionMethod{-1};
 
   // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};

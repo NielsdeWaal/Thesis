@@ -18,8 +18,8 @@ struct PrepareQuery {};
 // TODO query is very rigid right now, having to accept the ts and value
 struct Querying {
   std::string target; // target metric to query
-  std::function<bool(SeriesQuery::UnsignedLiteralExpr, SeriesQuery::SignedLiteralExpr)>
-      queryExpression; // query filter expression
+  // std::function<bool(SeriesQuery::UnsignedLiteralExpr, SeriesQuery::SignedLiteralExpr)>
+  //     queryExpression; // query filter expression
 };
 
 // TODO maybe hold information for things like the hdrhistogram
@@ -67,10 +67,13 @@ public:
     return Common::MONOTONIC_CLOCK::ToNanos(ingest);
   }
 
+  // void SetQuerying(
+  //     const std::string& target,
+  //     const std::function<bool(SeriesQuery::UnsignedLiteralExpr, SeriesQuery::SignedLiteralExpr)>& filterExpression) {
   void SetQuerying(
-      const std::string& target,
-      const std::function<bool(SeriesQuery::UnsignedLiteralExpr, SeriesQuery::SignedLiteralExpr)>& filterExpression) {
-    *this = Querying{.target = target, .queryExpression = filterExpression};
+      const std::string& target) {
+    // *this = Querying{.target = target, .queryExpression = filterExpression};
+    *this = Querying{.target = target};
     (*this).mIngestionLatency = mIngestionLatency;
     mQueryLatency = Common::MONOTONIC_CLOCK::Now();
   }
@@ -79,9 +82,9 @@ public:
     return std::get<LoadingData>(*this).filename;
   }
 
-  bool ExecFilter(SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
-    return std::get<Querying>(*this).queryExpression(ts, val);
-  }
+  // bool ExecFilter(SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
+  //   return std::get<Querying>(*this).queryExpression(ts, val);
+  // }
 
   [[nodiscard]] std::uint64_t Finalize() {
     auto query = Common::MONOTONIC_CLOCK::Now() - mTransitionLatency;
