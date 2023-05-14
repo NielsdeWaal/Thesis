@@ -66,7 +66,7 @@ public:
   , mWriter(mEv, mMetaData, maxOutstandingIO)
   , mIngestPort(mEv, mWriter)
   , mManagement(mEv, mMetaData)
-  // , mQueryManager(mEv)
+  , mQueryManager(mEv)
   {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
@@ -364,6 +364,7 @@ public:
             add(query, GtExpr{});
             add(query, ValueLiteral{});
             add(query, SignedLiteralExpr{95});
+
             // Expr query;
             // add(query, AndExpr{LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}}, GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}});
             for (std::size_t i = 0; i < memtableSize; ++i) {
@@ -378,6 +379,7 @@ public:
           mQueryLatency = mTestingHelper.Finalize();
         }
       }
+      mQueryManager.ParseQuery("(and (< #TS 1451621760000000000) (> #V 95))");
     }
 
     // When done, print time it took
@@ -451,7 +453,7 @@ private:
   Writer<bufSize> mWriter;
   IngestionPort<bufSize> mIngestPort;
   ManagementPort mManagement;
-  // QueryManager mQueryManager;
+  QueryManager mQueryManager;
   // int mIngestionMethod{-1};
 
   // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};

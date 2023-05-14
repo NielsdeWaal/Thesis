@@ -516,103 +516,119 @@ namespace SeriesQuery {
 
 } // namespace SeriesQuery
 
-// class QueryManager {
-// public:
-//   QueryManager(EventLoop::EventLoop& ev): mEv(ev) {
-//     mLogger = mEv.RegisterLogger("QueryManager");
-//   }
+class QueryManager {
+public:
+  QueryManager(EventLoop::EventLoop& ev): mEv(ev) {
+    mLogger = mEv.RegisterLogger("QueryManager");
+  }
 
-//   // void CreateQuery(const std::string& query) {
-//   //   //  [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
-//   //   // std::regex parser(R"[\s,]*(~@|[\[\]{}()'`~^@]|\"(\?:\\.|[\^\\\"])*\"?|;.*|[^\s\[\]{}('\"`,;)]*)");
-//   //   std::regex parser("[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\\\.|[^\\\\\"])*\"?|;.*|[^\s\\[\\]{}('\"`,;)]*)");
-//   //   std::vector<std::string> atoms(std::sregex_token_iterator(query.begin(), query.end(), parser, -1), {});
-//   //   mLogger->info("Parsed query into: size: {}", atoms.size());
-//   //   for (const auto& str : atoms) {
-//   //     mLogger->warn("{}", str);
-//   //   }
-//   // }
+  // void CreateQuery(const std::string& query) {
+  //   //  [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
+  //   // std::regex parser(R"[\s,]*(~@|[\[\]{}()'`~^@]|\"(\?:\\.|[\^\\\"])*\"?|;.*|[^\s\[\]{}('\"`,;)]*)");
+  //   std::regex parser("[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\\\.|[^\\\\\"])*\"?|;.*|[^\s\\[\\]{}('\"`,;)]*)");
+  //   std::vector<std::string> atoms(std::sregex_token_iterator(query.begin(), query.end(), parser, -1), {});
+  //   mLogger->info("Parsed query into: size: {}", atoms.size());
+  //   for (const auto& str : atoms) {
+  //     mLogger->warn("{}", str);
+  //   }
+  // }
 
-//   void Parse(std::string_view buf);
+  void Parse(std::string_view buf);
 
-// private:
-//   class ExpressionInterface {};
-//   class Integer {
-//   public:
-//     Integer(int val): value(val) {}
-//   private:
-//     int value;
-//   };
+  SeriesQuery::Expr ParseQuery(std::string_view buf) {
+    auto token = NextToken(buf);
+    while(!token.remaining.empty()) {
+      mLogger->info("Token: {}", token.parsed);
+      token = NextToken(token.remaining);
+    }
 
-//   class IndexExpression {
-//   public:
-//     void AddIndex(std::string_view index) {
-//       mTargetIndex.push_back(index);
-//     }
-//     void Add(std::string_view index) {
-//       mTargetIndex.push_back(index);
-//     }
+    return SeriesQuery::AndExpr{};
+  }
+  
+private:
+  struct Token {
+    std::string_view parsed;
+    std::string_view remaining;
+  };
 
-//     std::vector<std::string_view> GetTarget() const {
-//       return mTargetIndex;
-//     }
+  [[nodiscard]] constexpr Token NextToken(std::string_view input) {
+    constexpr auto is_eol = [](auto character) { return character == '\n' || character == '\r'; };
+    constexpr auto is_whitespace = [is_eol](auto character) {
+      return character == ' ' || character == '\t' || is_eol(character);
+    };
 
-//   private:
-//     std::vector<std::string_view> mTargetIndex;
-//   };
+    constexpr auto consume = [=](auto ws_input, auto predicate) {
+      auto begin = ws_input.begin();
+      while (begin != ws_input.end() && predicate(*begin)) {
+        ++begin;
+      }
+      return std::string_view{begin, ws_input.end()};
+    };
 
-//   struct ListExpression {
-//     void Add(std::string_view val) {
-//       mListItems.push_back(val);
-//     }
-//     void Add(Integer val) {
-//       mListItems.push_back(val);
-//     }
-//     std::vector<std::variant<std::string_view, Integer>> mListItems;
-//   };
+    constexpr auto make_token = [=](auto token_input, std::size_t size) {
+      return Token{token_input.substr(0, size), consume(token_input.substr(size), is_whitespace)};
+    };
 
-//   class QueryExpression {
-//   public:
-//     void SetIndex(std::string_view index) {
-//       mTargetIndex = index;
-//     }
+    input = consume(input, is_whitespace);
 
-//     void add(Integer val) {
-//       mTargetIndex = val;
-//     }
+    // comment
+    if (input.starts_with(';')) {
+      input = consume(input, [=](char character) { return not is_eol(character); });
+      input = consume(input, is_whitespace);
+    }
 
-//   private:
-//     std::variant<std::string_view, Integer> mTargetIndex;
-//   };
+    // list
+    if (input.starts_with('(') || input.starts_with(')')) {
+      return make_token(input, 1);
+    }
 
+    // literal list
+    if (input.starts_with("'(")) {
+      return make_token(input, 2);
+    }
 
-//   struct Expression {
-//     using ExpressionT = std::variant<QueryExpression, IndexExpression, ListExpression, Integer>;
+    // quoted string
+    if (input.starts_with('"')) {
+      bool in_escape = false;
+      auto location = std::next(input.begin());
+      while (location != input.end()) {
+        if (*location == '\\') {
+          in_escape = true;
+        } else if (*location == '"' && !in_escape) {
+          ++location;
+          break;
+        } else {
+          in_escape = false;
+        }
+        ++location;
+      }
 
-//     Expression(const ExpressionT& arg) : expr(arg) {}
+      return make_token(input, static_cast<std::size_t>(std::distance(input.begin(), location)));
+    }
 
-//     void Add(ExpressionT& arg) {
-//       std::visit([&arg](auto& expr){expr.add(arg);});
-//     }
+    // everything else
+    const auto value = consume(input, [=](char character) {
+      return !is_whitespace(character) && character != ')' && character != '(';
+    });
 
-//     ExpressionT expr;
-//   };
+    return make_token(input, static_cast<std::size_t>(std::distance(input.begin(), value.begin())));
+    }
+  
+  // inline std::tuple<std::string_view, std::size_t, bool> next_token(std::string_view buff);
+  
+  // inline std::tuple<int, bool> integer(std::string_view token);
 
-//   inline std::tuple<std::string_view, std::size_t, bool> next_token(std::string_view buff);
-//   inline std::tuple<int, bool> integer(std::string_view token);
+  // void EvaluateStack(
+  //     std::stack<Expression*>& stack,
+  //     std::vector<std::unordered_map<std::string_view, std::string>> variables);
 
-//   void EvaluateStack(
-//       std::stack<Expression*>& stack,
-//       std::vector<std::unordered_map<std::string_view, std::string>> variables);
+  EventLoop::EventLoop& mEv;
 
-//   EventLoop::EventLoop& mEv;
+  // std::deque<Expression> mExpressions;
+  // std::stack<Expression*> mParseStack;
+  // std::vector<std::unordered_map<std::string_view, std::string>> mScopedVars;
 
-//   std::deque<Expression> mExpressions;
-//   std::stack<Expression*> mParseStack;
-//   std::vector<std::unordered_map<std::string_view, std::string>> mScopedVars;
-
-//   std::shared_ptr<spdlog::logger> mLogger;
-// };
-
+  std::shared_ptr<spdlog::logger> mLogger;
+};
 
 #endif // __QUERY
