@@ -22,7 +22,7 @@ add_executable(FrogFish
   Writer.hpp
   MetaData.hpp
   Query.hpp
-  Query.cpp
+  # Query.cpp
 
   robin_hood.h
   IngestionProtocol/proto.capnp.h

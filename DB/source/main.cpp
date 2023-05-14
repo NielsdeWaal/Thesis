@@ -65,8 +65,9 @@ public:
   , mMetaData(mEv)
   , mWriter(mEv, mMetaData, maxOutstandingIO)
   , mIngestPort(mEv, mWriter)
-  , mManagement(mEv, mMetaData) 
-  , mQueryManager(mEv) {
+  , mManagement(mEv, mMetaData)
+  // , mQueryManager(mEv)
+  {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
@@ -264,9 +265,9 @@ public:
 
       // mQueryManager.CreateQuery("(+ 1234 123)");
       // mQueryManager.Parse("(+ 1234 (* 1 2))");
-      mQueryManager.Parse("(->> (index 50))");
-      mQueryManager.Parse("(->> (index (list 1 2)))");
-      mQueryManager.Parse("(->> (index 'usage_user'))");
+      // mQueryManager.Parse("(->> (index 50))");
+      // mQueryManager.Parse("(->> (index (list 1 2)))");
+      // mQueryManager.Parse("(->> (index 'usage_user'))");
       // mQueryManager.Parse("(->> (tag 'hostname'))");
 
       // std::string queryTarget{
@@ -275,17 +276,18 @@ public:
       // std::string
       // queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
       //                         "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
-      std::string queryTarget{"hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
-                              "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
+      std::string queryTarget{"hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,arch="
+                              "x86,team=SF,service=19,service_version=1,service_environment=test,usage_guest"};
 
       mMetaData.ReloadIndexes();
 
       auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
       assert(tagRes.has_value());
       mLogger->warn("tag; {}", fmt::join(tagRes.value(), ", "));
-      
+
       // std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
-      std::optional<std::uint64_t> targetIndex = std::nullopt;
+      std::optional<std::uint64_t> targetIndex = mMetaData.GetIndexByName(queryTarget);
+      // std::optional<std::uint64_t> targetIndex = std::nullopt;
       // assert(targetIndex.has_value());
       if (!targetIndex.has_value()) {
         mLogger->warn("Query target {} not found, skipping query test", queryTarget);
@@ -315,6 +317,7 @@ public:
       //       Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1452606760000000000}}, GtExpr{val, SignedLiteralExpr{99}}}));
       // };
       // mTestingHelper.SetQuerying(queryTarget, filter);
+      mTestingHelper.SetQuerying(queryTarget);
 
       // TODO support multiple starting multiple queries
       mRunningQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize);
@@ -322,6 +325,7 @@ public:
     }
 
     if (!mRunningQueries.empty() && mTestingHelper.IsQuerying()) {
+      // if (!mRunningQueries.empty()) {
       // poll the running queries, set mQueringDone when all have been resolved
       for (Query& op : mRunningQueries) {
         if (op) {
@@ -344,6 +348,29 @@ public:
             //     mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
             //   }
             // }
+            //
+            // AndExpr{
+            // LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
+            // GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}}
+            using namespace SeriesQuery;
+            // SeriesQuery::Expr query = AndExpr{
+            //     LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
+            //     GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}};
+            Expr query = AndExpr{};
+            // add(query, LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}});
+            add(query, LtExpr{});
+            add(query, TimestampLiteral{});
+            add(query, UnsignedLiteralExpr{1451621760000000000});
+            add(query, GtExpr{});
+            add(query, ValueLiteral{});
+            add(query, SignedLiteralExpr{95});
+            // Expr query;
+            // add(query, AndExpr{LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}}, GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}});
+            for (std::size_t i = 0; i < memtableSize; ++i) {
+              if (evaluate(query, points[i].timestamp, points[i].value)) {
+                mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+              }
+            }
           }
 
           std::erase(mRunningQueries, op);
@@ -400,8 +427,9 @@ private:
 
   static constexpr std::size_t maxOutstandingIO{48};
   // static constexpr std::size_t bufSize{4194304}; // 4MB
-  static constexpr std::size_t bufSize{2097152}; // 2MB
-  // static constexpr std::size_t bufSize{4096}; // 4KB
+  // static constexpr std::size_t bufSize{2097152}; // 2MB
+  static constexpr std::size_t bufSize{4096}; // 4KB
+  // static constexpr std::size_t bufSize{64}; // 64B
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
 
@@ -423,7 +451,7 @@ private:
   Writer<bufSize> mWriter;
   IngestionPort<bufSize> mIngestPort;
   ManagementPort mManagement;
-  QueryManager mQueryManager;
+  // QueryManager mQueryManager;
   // int mIngestionMethod{-1};
 
   // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};

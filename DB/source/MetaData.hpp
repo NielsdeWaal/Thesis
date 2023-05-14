@@ -81,6 +81,10 @@ public:
     }
    }
 
+  std::optional<std::uint64_t> GetIndexByName(const std::string& name) {
+    return mIdIndex.GetIndex(name);
+  }
+
   // std::optional<std::uint64_t> GetIndex(proto::IdRequest::Reader& request) {
   // Create conanical stream name and search for index in mIdIndex
   // }

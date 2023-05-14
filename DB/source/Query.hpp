@@ -9,6 +9,7 @@
 #include <memory>
 #include <regex>
 #include <spdlog/spdlog.h>
+#include <variant>
 #include <vector>
 
 // TODO there is an opportunity to do coalessing on the reads here
@@ -87,223 +88,531 @@ private:
 };
 
 class QueryBuilder {};
-// namespace SeriesQuery {
-//   template<typename T> class box {
-//     // Wrapper over unique_ptr.
-//     std::unique_ptr<T> _impl;
+namespace SeriesQuery {
+  template<class... Ts> struct overloaded: Ts... {
+    using Ts::operator()...;
+  };
 
-//   public:
-//     // Automatic construction from a `T`, not a `T*`.
-//     box(T&& obj): _impl(new T(std::move(obj))) {}
-//     box(const T& obj): _impl(new T(obj)) {}
+  template<typename T> class box {
+    // Wrapper over unique_ptr.
+    std::unique_ptr<T> _impl;
 
-//     // Copy constructor copies `T`.
-//     box(const box& other): box(*other._impl) {}
-//     box& operator=(const box& other) {
-//       *_impl = *other._impl;
-//       return *this;
-//     }
+  public:
+    // Automatic construction from a `T`, not a `T*`.
+    box(T&& obj): _impl(new T(std::move(obj))) {}
+    box(const T& obj): _impl(new T(obj)) {}
 
-//     // unique_ptr destroys `T` for us.
-//     ~box() = default;
+    // Copy constructor copies `T`.
+    box(const box& other): box(*other._impl) {}
+    box& operator=(const box& other) {
+      *_impl = *other._impl;
+      return *this;
+    }
 
-//     // Access propagates constness.
-//     T& operator*() {
-//       return *_impl;
-//     }
-//     const T& operator*() const {
-//       return *_impl;
-//     }
+    // unique_ptr destroys `T` for us.
+    ~box() = default;
 
-//     T* operator->() {
-//       return _impl.get();
-//     }
-//     const T* operator->() const {
-//       return _impl.get();
-//     }
-//   };
+    // Access propagates constness.
+    T& operator*() {
+      return *_impl;
+    }
+    const T& operator*() const {
+      return *_impl;
+    }
 
-//   struct UnsignedLiteralExpr {
-//     UnsignedLiteralExpr(std::uint64_t val): value(val) {}
-//     std::uint64_t value;
-//   };
+    T* operator->() {
+      return _impl.get();
+    }
+    const T* operator->() const {
+      return _impl.get();
+    }
 
-//   struct SignedLiteralExpr {
-//     SignedLiteralExpr(std::int64_t val): value(val) {}
-//     std::int64_t value;
-//   };
+    bool complete() const {
+      return _impl.get()->complete();
+    }
+  };
 
-//   using Expr = std::variant<
-//       UnsignedLiteralExpr,
-//       SignedLiteralExpr,
-//       box<struct EqExpr>,
-//       box<struct OrExpr>,
-//       box<struct AndExpr>,
-//       box<struct GtExpr>,
-//       box<struct LtExpr>>;
+  struct UnsignedLiteralExpr {
+    UnsignedLiteralExpr(std::uint64_t val): value(val) {}
+    std::uint64_t value;
+    bool complete() const {
+      return true;
+    }
+  };
 
-//   struct EqExpr {
-//     Expr lhs, rhs;
-//   };
+  struct SignedLiteralExpr {
+    SignedLiteralExpr(std::int64_t val): value(val) {}
+    std::int64_t value;
+    bool complete() const {
+      return true;
+    }
+  };
 
-//   struct OrExpr {
-//     Expr lhs, rhs;
-//   };
+  struct TimestampLiteral {
+    TimestampLiteral() = default;
+    bool complete() const {
+      return true;
+    }
+    // TimestampLiteral(std::uint64_t val): value(val) {}
+    // std::uint64_t value;
+  };
 
-//   struct AndExpr {
-//     Expr lhs, rhs;
-//   };
+  struct ValueLiteral {
+    ValueLiteral() = default;
+    bool complete() const {
+      return true;
+    }
+    // ValueLiteral(std::int64_t val): value(val) {}
+    // std::int64_t value;
+  };
 
-//   struct GtExpr {
-//     Expr lhs, rhs;
-//   };
+  using Expr = std::variant<
+      std::monostate,
+      UnsignedLiteralExpr,
+      SignedLiteralExpr,
+      TimestampLiteral,
+      ValueLiteral,
+      box<struct EqExpr>,
+      box<struct OrExpr>,
+      box<struct AndExpr>,
+      box<struct GtExpr>,
+      box<struct LtExpr>,
+      box<struct AddExpr>>;
 
-//   struct LtExpr {
-//     Expr lhs, rhs;
-//   };
+  struct EqExpr {
+    Expr lhs, rhs;
+    bool complete() const {
+      return !std::holds_alternative<std::monostate>(lhs) && !std::holds_alternative<std::monostate>(rhs);
+    }
+  };
 
-//   bool evaluate(const Expr& expr) {
-//     struct visitor {
-//       std::uint64_t operator()(const UnsignedLiteralExpr& expr) {
-//         return expr.value;
-//       }
+  struct OrExpr {
+    Expr lhs, rhs;
+    bool complete() const {
+      return !std::holds_alternative<std::monostate>(lhs) && !std::holds_alternative<std::monostate>(rhs);
+    }
+  };
 
-//       std::uint64_t operator()(const SignedLiteralExpr& expr) {
-//         return expr.value;
-//       }
+  struct AndExpr {
+    Expr lhs, rhs;
+    bool complete() const {
+      return !std::holds_alternative<std::monostate>(lhs) && !std::holds_alternative<std::monostate>(rhs);
+    }
+  };
 
-//       std::uint64_t operator()(const box<EqExpr>& expr) {
-//         auto lhs = std::visit(*this, expr->lhs);
-//         auto rhs = std::visit(*this, expr->rhs);
-//         return lhs == rhs;
-//       }
+  struct GtExpr {
+    Expr lhs, rhs;
+    bool complete() const {
+      return !std::holds_alternative<std::monostate>(lhs) && !std::holds_alternative<std::monostate>(rhs);
+    }
+  };
 
-//       std::uint64_t operator()(const box<OrExpr>& expr) {
-//         auto lhs = std::visit(*this, expr->lhs);
-//         auto rhs = std::visit(*this, expr->rhs);
-//         return lhs || rhs;
-//       }
+  struct LtExpr {
+    Expr lhs, rhs;
+    bool complete() const {
+      return !std::holds_alternative<std::monostate>(lhs) && !std::holds_alternative<std::monostate>(rhs);
+    }
+  };
 
-//       std::uint64_t operator()(const box<AndExpr>& expr) {
-//         auto lhs = std::visit(*this, expr->lhs);
-//         auto rhs = std::visit(*this, expr->rhs);
-//         return lhs && rhs;
-//       }
+  struct AddExpr {
+    Expr lhs, rhs;
+    bool complete() const {
+      return !std::holds_alternative<std::monostate>(lhs) && !std::holds_alternative<std::monostate>(rhs);
+    }
+  };
 
-//       std::uint64_t operator()(const box<GtExpr>& expr) {
-//         auto lhs = std::visit(*this, expr->lhs);
-//         auto rhs = std::visit(*this, expr->rhs);
-//         return lhs > rhs;
-//       }
-//       std::uint64_t operator()(const box<LtExpr>& expr) {
-//         auto lhs = std::visit(*this, expr->lhs);
-//         auto rhs = std::visit(*this, expr->rhs);
-//         return lhs < rhs;
-//       }
-//     };
+  void add(Expr& curr, Expr newExpr) {
+    struct visitor {
+      visitor(Expr& expression, Expr& parent): expression(expression), parent(parent) {}
+      void operator()([[maybe_unused]] const UnsignedLiteralExpr& expr) {
+        assert(false);
+      }
 
-//     return std::visit(visitor{}, expr);
-//   }
+      void operator()([[maybe_unused]] const SignedLiteralExpr& expr) {
+        assert(false);
+      }
 
-// } // namespace SeriesQuery
+      void operator()([[maybe_unused]] const TimestampLiteral& expr) {
+        assert(false);
+      }
 
-class QueryManager {
-public:
-  QueryManager(EventLoop::EventLoop& ev): mEv(ev) {
-    mLogger = mEv.RegisterLogger("QueryManager");
+      void operator()([[maybe_unused]] const ValueLiteral& expr) {
+        assert(false);
+      }
+
+      void operator()(box<EqExpr>& expr) {
+        // auto lhs = std::visit(*this, expr->lhs);
+        // auto rhs = std::visit(*this, expr->rhs);
+        if (std::holds_alternative<std::monostate>(expr->lhs)) {
+          expr->lhs = expression;
+        } else {
+          bool lhsComplete = std::visit(
+              overloaded{
+                  [](auto arg) -> bool { return arg.complete(); },
+                  [](std::monostate) -> bool {
+                    assert(false);
+                    return false;
+                  }},
+              expr->lhs);
+          if (!lhsComplete) {
+            std::visit(visitor{expression, expr->lhs}, expr->lhs);
+          } else if (std::holds_alternative<std::monostate>(expr->rhs)) {
+            expr->rhs = expression;
+          } else {
+            bool rhsComplete = std::visit(
+                overloaded{
+                    [](auto arg) -> bool { return arg.complete(); },
+                    [](std::monostate) -> bool {
+                      assert(false);
+                      return false;
+                    },
+                },
+                expr->rhs);
+            if (!rhsComplete) {
+              std::visit(visitor{expression, expr->rhs}, expr->rhs);
+            }
+          }
+        }
+      }
+
+      void operator()(box<OrExpr>& expr) {
+        if (std::holds_alternative<std::monostate>(expr->lhs)) {
+          expr->lhs = expression;
+        } else {
+          bool lhsComplete = std::visit(
+              overloaded{
+                  [](auto arg) -> bool { return arg.complete(); },
+                  [](std::monostate) -> bool {
+                    assert(false);
+                    return false;
+                  }},
+              expr->lhs);
+          if (!lhsComplete) {
+            std::visit(visitor{expression, expr->lhs}, expr->lhs);
+          } else if (std::holds_alternative<std::monostate>(expr->rhs)) {
+            expr->rhs = expression;
+          } else {
+            bool rhsComplete = std::visit(
+                overloaded{
+                    [](auto arg) -> bool { return arg.complete(); },
+                    [](std::monostate) -> bool {
+                      assert(false);
+                      return false;
+                    },
+                },
+                expr->rhs);
+            if (!rhsComplete) {
+              std::visit(visitor{expression, expr->rhs}, expr->rhs);
+            }
+          }
+        }
+      }
+
+      void operator()(box<AndExpr>& expr) {
+        if (std::holds_alternative<std::monostate>(expr->lhs)) {
+          expr->lhs = expression;
+        } else {
+          bool lhsComplete = std::visit(
+              overloaded{
+                  [](auto arg) -> bool { return arg.complete(); },
+                  [](std::monostate) -> bool {
+                    assert(false);
+                    return false;
+                  }},
+              expr->lhs);
+          if (!lhsComplete) {
+            std::visit(visitor{expression, expr->lhs}, expr->lhs);
+          } else if (std::holds_alternative<std::monostate>(expr->rhs)) {
+            expr->rhs = expression;
+          } else {
+            bool rhsComplete = std::visit(
+                overloaded{
+                    [](auto arg) -> bool { return arg.complete(); },
+                    [](std::monostate) -> bool {
+                      assert(false);
+                      return false;
+                    },
+                },
+                expr->rhs);
+            if (!rhsComplete) {
+              std::visit(visitor{expression, expr->rhs}, expr->rhs);
+            }
+          }
+        }
+      }
+
+      void operator()(box<GtExpr>& expr) {
+        if (std::holds_alternative<std::monostate>(expr->lhs)) {
+          expr->lhs = expression;
+        } else {
+          bool lhsComplete = std::visit(
+              overloaded{
+                  [](auto arg) -> bool { return arg.complete(); },
+                  [](std::monostate) -> bool {
+                    assert(false);
+                    return false;
+                  }},
+              expr->lhs);
+          if (!lhsComplete) {
+            std::visit(visitor{expression, expr->lhs}, expr->lhs);
+          } else if (std::holds_alternative<std::monostate>(expr->rhs)) {
+            expr->rhs = expression;
+          } else {
+            bool rhsComplete = std::visit(
+                overloaded{
+                    [](auto arg) -> bool { return arg.complete(); },
+                    [](std::monostate) -> bool {
+                      assert(false);
+                      return false;
+                    },
+                },
+                expr->rhs);
+            if (!rhsComplete) {
+              std::visit(visitor{expression, expr->rhs}, expr->rhs);
+            }
+          }
+        }
+      }
+      void operator()(box<LtExpr>& expr) {
+        if (std::holds_alternative<std::monostate>(expr->lhs)) {
+          expr->lhs = expression;
+        } else {
+          bool lhsComplete = std::visit(
+              overloaded{
+                  [](auto arg) -> bool { return arg.complete(); },
+                  [](std::monostate) -> bool {
+                    assert(false);
+                    return false;
+                  }},
+              expr->lhs);
+          if (!lhsComplete) {
+            std::visit(visitor{expression, expr->lhs}, expr->lhs);
+          } else if (std::holds_alternative<std::monostate>(expr->rhs)) {
+            expr->rhs = expression;
+          } else {
+            bool rhsComplete = std::visit(
+                overloaded{
+                    [](auto arg) -> bool { return arg.complete(); },
+                    [](std::monostate) -> bool {
+                      assert(false);
+                      return false;
+                    },
+                },
+                expr->rhs);
+            if (!rhsComplete) {
+              std::visit(visitor{expression, expr->rhs}, expr->rhs);
+            }
+          }
+        }
+      }
+      void operator()(box<AddExpr>& expr) {
+        if (std::holds_alternative<std::monostate>(expr->lhs)) {
+          expr->lhs = expression;
+        } else {
+          bool lhsComplete = std::visit(
+              overloaded{
+                  [](auto arg) -> bool { return arg.complete(); },
+                  [](std::monostate) -> bool {
+                    assert(false);
+                    return false;
+                  }},
+              expr->lhs);
+          if (!lhsComplete) {
+            std::visit(visitor{expression, expr->lhs}, expr->lhs);
+          } else if (std::holds_alternative<std::monostate>(expr->rhs)) {
+            expr->rhs = expression;
+          } else {
+            bool rhsComplete = std::visit(
+                overloaded{
+                    [](auto arg) -> bool { return arg.complete(); },
+                    [](std::monostate) -> bool {
+                      assert(false);
+                      return false;
+                    },
+                },
+                expr->rhs);
+            if (!rhsComplete) {
+              std::visit(visitor{expression, expr->rhs}, expr->rhs);
+            }
+          }
+        }
+      }
+      void operator()(std::monostate&) {
+        // assert(false);
+        parent = expression;
+        // return lhs + rhs;
+      }
+      Expr& expression;
+      Expr& parent;
+    };
+
+    std::visit(visitor{newExpr, curr}, curr);
   }
 
-  // void CreateQuery(const std::string& query) {
-  //   //  [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
-  //   // std::regex parser(R"[\s,]*(~@|[\[\]{}()'`~^@]|\"(\?:\\.|[\^\\\"])*\"?|;.*|[^\s\[\]{}('\"`,;)]*)");
-  //   std::regex parser("[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\\\.|[^\\\\\"])*\"?|;.*|[^\s\\[\\]{}('\"`,;)]*)");
-  //   std::vector<std::string> atoms(std::sregex_token_iterator(query.begin(), query.end(), parser, -1), {});
-  //   mLogger->info("Parsed query into: size: {}", atoms.size());
-  //   for (const auto& str : atoms) {
-  //     mLogger->warn("{}", str);
-  //   }
-  // }
+  bool evaluate(const Expr& expr, std::uint64_t timestamp, std::int64_t value) {
+    struct visitor {
+      visitor(std::uint64_t timestamp, std::uint64_t value): ts(timestamp), val(value) {}
+      std::uint64_t operator()(const UnsignedLiteralExpr& expr) {
+        return expr.value;
+      }
 
-  void Parse(std::string_view buf);
+      std::uint64_t operator()(const SignedLiteralExpr& expr) {
+        return expr.value;
+      }
 
-private:
-  class ExpressionInterface {};
-  class Integer {
-  public: 
-    Integer(int val): value(val) {}
-  private: 
-    int value;
-  };
+      std::uint64_t operator()([[maybe_unused]] const TimestampLiteral& expr) {
+        return ts;
+      }
 
-  class IndexExpression {
-  public:
-    void AddIndex(std::string_view index) {
-      mTargetIndex.push_back(index);
-    }
-    void Add(std::string_view index) {
-      mTargetIndex.push_back(index);
-    }
+      std::uint64_t operator()([[maybe_unused]] const ValueLiteral& expr) {
+        return val;
+      }
 
-    std::vector<std::string_view> GetTarget() const {
-      return mTargetIndex;
-    }
+      std::uint64_t operator()(const box<EqExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs == rhs;
+      }
 
-  private:
-    std::vector<std::string_view> mTargetIndex;
-  };
+      std::uint64_t operator()(const box<OrExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs || rhs;
+      }
 
-  struct ListExpression {
-    void Add(std::string_view val) {
-      mListItems.push_back(val);
-    }
-    void Add(Integer val) {
-      mListItems.push_back(val);
-    }
-    std::vector<std::variant<std::string_view, Integer>> mListItems;
-  };
+      std::uint64_t operator()(const box<AndExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs && rhs;
+      }
 
-  class QueryExpression {
-  public:
-    void SetIndex(std::string_view index) {
-      mTargetIndex = index;
-    }
+      std::uint64_t operator()(const box<GtExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs > rhs;
+      }
+      std::uint64_t operator()(const box<LtExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs < rhs;
+      }
+      std::uint64_t operator()(const box<AddExpr>& expr) {
+        auto lhs = std::visit(*this, expr->lhs);
+        auto rhs = std::visit(*this, expr->rhs);
+        return lhs + rhs;
+      }
+      std::uint64_t operator()(const std::monostate&) {
+        assert(false);
+        // return lhs + rhs;
+      }
 
-    void add(Integer val) {
-      mTargetIndex = val;
-    }
+    private:
+      std::uint64_t ts;
+      std::uint64_t val;
+    };
 
-  private:
-    std::variant<std::string_view, Integer> mTargetIndex;
-  };
+    return std::visit(visitor{timestamp, static_cast<uint64_t>(value)}, expr);
+  }
+
+} // namespace SeriesQuery
+
+// class QueryManager {
+// public:
+//   QueryManager(EventLoop::EventLoop& ev): mEv(ev) {
+//     mLogger = mEv.RegisterLogger("QueryManager");
+//   }
+
+//   // void CreateQuery(const std::string& query) {
+//   //   //  [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
+//   //   // std::regex parser(R"[\s,]*(~@|[\[\]{}()'`~^@]|\"(\?:\\.|[\^\\\"])*\"?|;.*|[^\s\[\]{}('\"`,;)]*)");
+//   //   std::regex parser("[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\\\.|[^\\\\\"])*\"?|;.*|[^\s\\[\\]{}('\"`,;)]*)");
+//   //   std::vector<std::string> atoms(std::sregex_token_iterator(query.begin(), query.end(), parser, -1), {});
+//   //   mLogger->info("Parsed query into: size: {}", atoms.size());
+//   //   for (const auto& str : atoms) {
+//   //     mLogger->warn("{}", str);
+//   //   }
+//   // }
+
+//   void Parse(std::string_view buf);
+
+// private:
+//   class ExpressionInterface {};
+//   class Integer {
+//   public:
+//     Integer(int val): value(val) {}
+//   private:
+//     int value;
+//   };
+
+//   class IndexExpression {
+//   public:
+//     void AddIndex(std::string_view index) {
+//       mTargetIndex.push_back(index);
+//     }
+//     void Add(std::string_view index) {
+//       mTargetIndex.push_back(index);
+//     }
+
+//     std::vector<std::string_view> GetTarget() const {
+//       return mTargetIndex;
+//     }
+
+//   private:
+//     std::vector<std::string_view> mTargetIndex;
+//   };
+
+//   struct ListExpression {
+//     void Add(std::string_view val) {
+//       mListItems.push_back(val);
+//     }
+//     void Add(Integer val) {
+//       mListItems.push_back(val);
+//     }
+//     std::vector<std::variant<std::string_view, Integer>> mListItems;
+//   };
+
+//   class QueryExpression {
+//   public:
+//     void SetIndex(std::string_view index) {
+//       mTargetIndex = index;
+//     }
+
+//     void add(Integer val) {
+//       mTargetIndex = val;
+//     }
+
+//   private:
+//     std::variant<std::string_view, Integer> mTargetIndex;
+//   };
 
 
-  struct Expression {
-    using ExpressionT = std::variant<QueryExpression, IndexExpression, ListExpression, Integer>;
+//   struct Expression {
+//     using ExpressionT = std::variant<QueryExpression, IndexExpression, ListExpression, Integer>;
 
-    Expression(const ExpressionT& arg) : expr(arg) {}
+//     Expression(const ExpressionT& arg) : expr(arg) {}
 
-    void Add(ExpressionT& arg) {
-      std::visit([&arg](auto& expr){expr.add(arg);});
-    }
+//     void Add(ExpressionT& arg) {
+//       std::visit([&arg](auto& expr){expr.add(arg);});
+//     }
 
-    ExpressionT expr;
-  };
+//     ExpressionT expr;
+//   };
 
-  inline std::tuple<std::string_view, std::size_t, bool> next_token(std::string_view buff);
-  inline std::tuple<int, bool> integer(std::string_view token);
+//   inline std::tuple<std::string_view, std::size_t, bool> next_token(std::string_view buff);
+//   inline std::tuple<int, bool> integer(std::string_view token);
 
-  void EvaluateStack(
-      std::stack<Expression*>& stack,
-      std::vector<std::unordered_map<std::string_view, std::string>> variables);
+//   void EvaluateStack(
+//       std::stack<Expression*>& stack,
+//       std::vector<std::unordered_map<std::string_view, std::string>> variables);
 
-  EventLoop::EventLoop& mEv;
+//   EventLoop::EventLoop& mEv;
 
-  std::deque<Expression> mExpressions;
-  std::stack<Expression*> mParseStack;
-  std::vector<std::unordered_map<std::string_view, std::string>> mScopedVars;
+//   std::deque<Expression> mExpressions;
+//   std::stack<Expression*> mParseStack;
+//   std::vector<std::unordered_map<std::string_view, std::string>> mScopedVars;
 
-  std::shared_ptr<spdlog::logger> mLogger;
-};
+//   std::shared_ptr<spdlog::logger> mLogger;
+// };
 
 
 #endif // __QUERY
