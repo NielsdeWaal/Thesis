@@ -180,6 +180,7 @@ public:
           mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
         }
 
+        mTaggedDataBatches.clear();
         return;
       }
 
