@@ -5,6 +5,7 @@
 #include "IngestionPort.hpp"
 #include "ManagementPort.hpp"
 #include "MemTable.hpp"
+#include "QueryManager.hpp"
 // #include "lexyparser.hpp"
 #include "IngestionProtocol/proto.capnp.h"
 #include "MetaData.hpp"
@@ -66,8 +67,7 @@ public:
   , mWriter(mEv, mMetaData, maxOutstandingIO)
   , mIngestPort(mEv, mWriter)
   , mManagement(mEv, mMetaData)
-  , mQueryManager(mEv)
-  {
+  , mQueryManager(mEv, mWriter) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
@@ -276,40 +276,47 @@ public:
       // std::string
       // queryTarget{"cpu,hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,"
       //                         "arch=x86,team=SF,service=19,service_version=1,service_environment=test,usage_user"};
-      std::string queryTarget{"hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,arch="
-                              "x86,team=SF,service=19,service_version=1,service_environment=test,usage_guest"};
+      // std::string queryTarget{"hostname=host_0,region=eu-central-1,datacenter=eu-central-1a,rack=6,os=Ubuntu15.10,arch="
+      //                         "x86,team=SF,service=19,service_version=1,service_environment=test,usage_guest"};
 
       mMetaData.ReloadIndexes();
 
-      auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
-      assert(tagRes.has_value());
-      mLogger->warn("tag; {}", fmt::join(tagRes.value(), ", "));
+      mQueryManager.SubmitQuery("(->>"
+                                "(range 1451606400000000000 1464713590000000000)"
+                                "(index 42)"
+                                "(where (and (< #TS 1451621760000000000) (> #V 95))))");
 
-      // std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
-      std::optional<std::uint64_t> targetIndex = mMetaData.GetIndexByName(queryTarget);
-      // std::optional<std::uint64_t> targetIndex = std::nullopt;
-      // assert(targetIndex.has_value());
-      if (!targetIndex.has_value()) {
-        mLogger->warn("Query target {} not found, skipping query test", queryTarget);
-        mQueryLatency = mTestingHelper.Finalize();
-        return;
-      }
-      mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
+      // auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
+      // auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
+      // assert(tagRes.has_value());
+      // mLogger->warn("tag; {}", fmt::join(tagRes.value(), ", "));
+
+      // // std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
+      // std::optional<std::uint64_t> targetIndex = mMetaData.GetIndexByName(queryTarget);
+      // // std::optional<std::uint64_t> targetIndex = std::nullopt;
+      // // assert(targetIndex.has_value());
+      // if (!targetIndex.has_value()) {
+      //   mLogger->warn("Query target {} not found, skipping query test", queryTarget);
+      //   mQueryLatency = mTestingHelper.Finalize();
+      //   return;
+      // }
+      // mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
 
       // auto nodes = mTrees[*targetIndex]->tree.Query(1464660970000000000, 1464739190000000000);
       // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
-      auto nodes = mWriter.GetTreeForIndex(targetIndex.value()).Query(1451606400000000000, 1452917110000000000);
-      // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
-      assert(nodes.has_value());
+      // auto nodes = mWriter.GetTreeForIndex(targetIndex.value()).Query(1451606400000000000, 1452917110000000000);
+      // auto nodes = mWriter.GetTreeForIndex(targetIndex.value()).Query(1451606400000000000, 1464713590000000000);
+      // // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
+      // assert(nodes.has_value());
 
-      std::vector<std::uint64_t> addrs;
-      addrs.reserve(nodes->size());
-      // std::transform(nodes->begin(), nodes->end(), addrs.begin(), [](const TimeRange_t& tr){return tr.ptr;});
-      for (const TimeRange_t& tr : *nodes) {
-        addrs.push_back(tr.ptr);
-      }
+      // std::vector<std::uint64_t> addrs;
+      // addrs.reserve(nodes->size());
+      // // std::transform(nodes->begin(), nodes->end(), addrs.begin(), [](const TimeRange_t& tr){return tr.ptr;});
+      // for (const TimeRange_t& tr : *nodes) {
+      //   addrs.push_back(tr.ptr);
+      // }
 
-      mLogger->info("Query requires {} reads, starting...", addrs.size());
+      // mLogger->info("Query requires {} reads, starting...", addrs.size());
 
       // auto filter = [](SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
       //   using namespace SeriesQuery;
@@ -317,70 +324,78 @@ public:
       //       Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1452606760000000000}}, GtExpr{val, SignedLiteralExpr{99}}}));
       // };
       // mTestingHelper.SetQuerying(queryTarget, filter);
-      mTestingHelper.SetQuerying(queryTarget);
+      // mTestingHelper.SetQuerying(queryTarget);
+      mTestingHelper.Finalize();
 
       // TODO support multiple starting multiple queries
-      mRunningQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize);
+      // mRunningQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize);
       mQueryStarted = true;
     }
 
-    if (!mRunningQueries.empty() && mTestingHelper.IsQuerying()) {
-      // if (!mRunningQueries.empty()) {
-      // poll the running queries, set mQueringDone when all have been resolved
-      for (Query& op : mRunningQueries) {
-        if (op) {
-          auto& res = op.GetResult();
+    // if (!mRunningQueries.empty() && mTestingHelper.IsQuerying()) {
+    //   // if (!mRunningQueries.empty()) {
+    //   // poll the running queries, set mQueringDone when all have been resolved
+    //   for (QueryIO& op : mRunningQueries) {
+    //     if (op) {
+    //       auto& res = op.GetResult();
 
-          mLogger->info("Query finished for {} blocks", res.size());
+    //       mLogger->info("Query finished for {} blocks", res.size());
 
-          std::vector<EventLoop::DmaBuffer> resultBuffers;
-          std::for_each(res.begin(), res.end(), [&resultBuffers](IOOP& resOp) {
-            resultBuffers.emplace_back(std::move(resOp.buf));
-          });
-          for (EventLoop::DmaBuffer& buf : resultBuffers) {
-            DataPoint* points = ( DataPoint* ) buf.GetPtr();
+    //       std::vector<EventLoop::DmaBuffer> resultBuffers;
+    //       std::for_each(res.begin(), res.end(), [&resultBuffers](IOOP& resOp) {
+    //         resultBuffers.emplace_back(std::move(resOp.buf));
+    //       });
 
-            // using namespace SeriesQuery;
+    //       using namespace SeriesQuery;
+    //       // SeriesQuery::Expr query = AndExpr{
+    //       //     LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
+    //       //     GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}};
+    //       // Expr q = AndExpr{};
+    //       // add(query, LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}});
+    //       // add(q, LtExpr{});
+    //       // add(q, TimestampLiteral{});
+    //       // add(q, UnsignedLiteralExpr{1451621760000000000});
+    //       // add(q, GtExpr{});
+    //       // add(q, ValueLiteral{});
+    //       // add(q, SignedLiteralExpr{95});
 
-            // // memtableSize is the size of the buffer when seen as an array of DataPoint's
-            // for (std::size_t i = 0; i < memtableSize; ++i) {
-            //   if (mTestingHelper.ExecFilter(points[i].timestamp, points[i].value)) {
-            //     mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
-            //   }
-            // }
-            //
-            // AndExpr{
-            // LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
-            // GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}}
-            using namespace SeriesQuery;
-            // SeriesQuery::Expr query = AndExpr{
-            //     LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
-            //     GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}};
-            Expr query = AndExpr{};
-            // add(query, LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}});
-            add(query, LtExpr{});
-            add(query, TimestampLiteral{});
-            add(query, UnsignedLiteralExpr{1451621760000000000});
-            add(query, GtExpr{});
-            add(query, ValueLiteral{});
-            add(query, SignedLiteralExpr{95});
+    //       // const Expr query = mQueryManager.ParseQuery("(and (< #TS 1451621760000000000) (> #V 95))");
 
-            // Expr query;
-            // add(query, AndExpr{LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}}, GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}});
-            for (std::size_t i = 0; i < memtableSize; ++i) {
-              if (evaluate(query, points[i].timestamp, points[i].value)) {
-                mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
-              }
-            }
-          }
+    //       for (EventLoop::DmaBuffer& buf : resultBuffers) {
+    //         DataPoint* points = ( DataPoint* ) buf.GetPtr();
 
-          std::erase(mRunningQueries, op);
-          mQueringDone = true;
-          mQueryLatency = mTestingHelper.Finalize();
-        }
-      }
-      mQueryManager.ParseQuery("(and (< #TS 1451621760000000000) (> #V 95))");
-    }
+    //         // using namespace SeriesQuery;
+
+    //         // // memtableSize is the size of the buffer when seen as an array of DataPoint's
+    //         // for (std::size_t i = 0; i < memtableSize; ++i) {
+    //         //   if (mTestingHelper.ExecFilter(points[i].timestamp, points[i].value)) {
+    //         //     mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+    //         //   }
+    //         // }
+    //         //
+    //         // AndExpr{
+    //         // LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
+    //         // GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}}
+
+    //         // Expr query;
+    //         // add(query, AndExpr{LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
+    //         // GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}});
+    //         // for (std::size_t i = 0; i < memtableSize; ++i) {
+    //         //   if (evaluate(query, points[i].timestamp, points[i].value)) {
+    //         //     mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+    //         //   }
+    //         // }
+    //       }
+
+    //       mLogger->info("Query done");
+    //       // mQueryManager.ParseQuery("(and (< #TS 1451621760000000000) (> #V 95))");
+
+    //       std::erase(mRunningQueries, op);
+    //       mQueringDone = true;
+    //       mQueryLatency = mTestingHelper.Finalize();
+    //     }
+    //   }
+    // }
 
     // When done, print time it took
     // TODO, instead of waiting for the queue to be empty, check with mInputs if there is anythin
@@ -429,8 +444,8 @@ private:
 
   static constexpr std::size_t maxOutstandingIO{48};
   // static constexpr std::size_t bufSize{4194304}; // 4MB
-  // static constexpr std::size_t bufSize{2097152}; // 2MB
-  static constexpr std::size_t bufSize{4096}; // 4KB
+  static constexpr std::size_t bufSize{2097152}; // 2MB
+  // static constexpr std::size_t bufSize{4096}; // 4KB
   // static constexpr std::size_t bufSize{64}; // 64B
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
 
@@ -453,7 +468,7 @@ private:
   Writer<bufSize> mWriter;
   IngestionPort<bufSize> mIngestPort;
   ManagementPort mManagement;
-  QueryManager mQueryManager;
+  QueryManager<bufSize> mQueryManager;
   // int mIngestionMethod{-1};
 
   // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};
@@ -478,7 +493,7 @@ private:
   // std::unordered_map<std::string, MetricTree> mTrees;
   // std::unordered_map<std::uint64_t, MetricTree> mTrees;
 
-  std::vector<Query> mRunningQueries;
+  std::vector<QueryIO> mRunningQueries;
   TestingHelper mTestingHelper;
   // std::unordered_map<std::string, std::uint64_t> mIndex;
   // std::uint64_t mIndexCounter{0};

@@ -5,6 +5,7 @@
 #include "EventLoop.h"
 #include "UringCommands.h"
 
+#include <charconv>
 #include <cstdint>
 #include <memory>
 #include <regex>
@@ -23,11 +24,11 @@ struct IOOP {
   EventLoop::DmaBuffer buf;
 };
 
-class Query: EventLoop::IUringCallbackHandler {
+class QueryIO: EventLoop::IUringCallbackHandler {
 public:
-  Query() = default;
+  QueryIO() = default;
 
-  Query(EventLoop::EventLoop& ev, int fd, std::vector<IOOP>& ops) {
+  QueryIO(EventLoop::EventLoop& ev, int fd, std::vector<IOOP>& ops) {
     mInFlightIO.reserve(ops.size());
     for (IOOP& op : ops) {
       std::unique_ptr<EventLoop::UserData> data = std::make_unique<EventLoop::UserData>();
@@ -42,7 +43,7 @@ public:
     }
     mIOCount = ops.size();
   }
-  Query(EventLoop::EventLoop& ev, int fd, const std::vector<std::uint64_t>& addrs, std::size_t blockSize) {
+  QueryIO(EventLoop::EventLoop& ev, int fd, const std::vector<std::uint64_t>& addrs, std::size_t blockSize) {
     mInFlightIO.reserve(addrs.size());
     for (const std::uint64_t addr : addrs) {
       std::unique_ptr<EventLoop::UserData> data = std::make_unique<EventLoop::UserData>();
@@ -108,6 +109,9 @@ namespace SeriesQuery {
       *_impl = *other._impl;
       return *this;
     }
+
+    // box(const box&) = delete;
+    box(box&&) = default;
 
     // unique_ptr destroys `T` for us.
     ~box() = default;
@@ -515,120 +519,5 @@ namespace SeriesQuery {
   }
 
 } // namespace SeriesQuery
-
-class QueryManager {
-public:
-  QueryManager(EventLoop::EventLoop& ev): mEv(ev) {
-    mLogger = mEv.RegisterLogger("QueryManager");
-  }
-
-  // void CreateQuery(const std::string& query) {
-  //   //  [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
-  //   // std::regex parser(R"[\s,]*(~@|[\[\]{}()'`~^@]|\"(\?:\\.|[\^\\\"])*\"?|;.*|[^\s\[\]{}('\"`,;)]*)");
-  //   std::regex parser("[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\\\.|[^\\\\\"])*\"?|;.*|[^\s\\[\\]{}('\"`,;)]*)");
-  //   std::vector<std::string> atoms(std::sregex_token_iterator(query.begin(), query.end(), parser, -1), {});
-  //   mLogger->info("Parsed query into: size: {}", atoms.size());
-  //   for (const auto& str : atoms) {
-  //     mLogger->warn("{}", str);
-  //   }
-  // }
-
-  void Parse(std::string_view buf);
-
-  SeriesQuery::Expr ParseQuery(std::string_view buf) {
-    auto token = NextToken(buf);
-    while(!token.remaining.empty()) {
-      mLogger->info("Token: {}", token.parsed);
-      token = NextToken(token.remaining);
-    }
-
-    return SeriesQuery::AndExpr{};
-  }
-  
-private:
-  struct Token {
-    std::string_view parsed;
-    std::string_view remaining;
-  };
-
-  [[nodiscard]] constexpr Token NextToken(std::string_view input) {
-    constexpr auto is_eol = [](auto character) { return character == '\n' || character == '\r'; };
-    constexpr auto is_whitespace = [is_eol](auto character) {
-      return character == ' ' || character == '\t' || is_eol(character);
-    };
-
-    constexpr auto consume = [=](auto ws_input, auto predicate) {
-      auto begin = ws_input.begin();
-      while (begin != ws_input.end() && predicate(*begin)) {
-        ++begin;
-      }
-      return std::string_view{begin, ws_input.end()};
-    };
-
-    constexpr auto make_token = [=](auto token_input, std::size_t size) {
-      return Token{token_input.substr(0, size), consume(token_input.substr(size), is_whitespace)};
-    };
-
-    input = consume(input, is_whitespace);
-
-    // comment
-    if (input.starts_with(';')) {
-      input = consume(input, [=](char character) { return not is_eol(character); });
-      input = consume(input, is_whitespace);
-    }
-
-    // list
-    if (input.starts_with('(') || input.starts_with(')')) {
-      return make_token(input, 1);
-    }
-
-    // literal list
-    if (input.starts_with("'(")) {
-      return make_token(input, 2);
-    }
-
-    // quoted string
-    if (input.starts_with('"')) {
-      bool in_escape = false;
-      auto location = std::next(input.begin());
-      while (location != input.end()) {
-        if (*location == '\\') {
-          in_escape = true;
-        } else if (*location == '"' && !in_escape) {
-          ++location;
-          break;
-        } else {
-          in_escape = false;
-        }
-        ++location;
-      }
-
-      return make_token(input, static_cast<std::size_t>(std::distance(input.begin(), location)));
-    }
-
-    // everything else
-    const auto value = consume(input, [=](char character) {
-      return !is_whitespace(character) && character != ')' && character != '(';
-    });
-
-    return make_token(input, static_cast<std::size_t>(std::distance(input.begin(), value.begin())));
-    }
-  
-  // inline std::tuple<std::string_view, std::size_t, bool> next_token(std::string_view buff);
-  
-  // inline std::tuple<int, bool> integer(std::string_view token);
-
-  // void EvaluateStack(
-  //     std::stack<Expression*>& stack,
-  //     std::vector<std::unordered_map<std::string_view, std::string>> variables);
-
-  EventLoop::EventLoop& mEv;
-
-  // std::deque<Expression> mExpressions;
-  // std::stack<Expression*> mParseStack;
-  // std::vector<std::unordered_map<std::string_view, std::string>> mScopedVars;
-
-  std::shared_ptr<spdlog::logger> mLogger;
-};
 
 #endif // __QUERY
