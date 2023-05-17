@@ -281,20 +281,21 @@ public:
 
       mMetaData.ReloadIndexes();
 
-      mQueryManager.SubmitQuery("(->>"
-                                "(index 42)"
-                                "(range 1451606400000000000 1464713590000000000)"
-                                "(where (and (< #TS 1451621760000000000) (> #V 95))))");
+      // mQueryManager.SubmitQuery("(->>"
+      //                           "(index 42)"
+      //                           "(range 1451606400000000000 1464713590000000000)"
+      //                           "(where (and (< #TS 1451621760000000000) (> #V 95))))");
 
       // mQueryManager.SubmitQuery("(->>"
       //                           "(index 50)"
       //                           "(range 1451606400000000000 1464713590000000000)"
       //                           "(where (and (< #TS 1451621760000000000) (> #V 95))))");
 
-      // mQueryManager.SubmitQuery("(->>"
-      //                           "(tag)"
-      //                           "(range 1451606400000000000 1464713590000000000)"
-      //                           "(where (and (< #TS 1451621760000000000) (> #V 95))))");
+      mQueryManager.SubmitQuery("(->>"
+                                "(index 50)"
+                                "(tag \"hostname\" '(\"host_0\" \"host_1\"))"
+                                "(range 1451606400000000000 1464713590000000000)"
+                                "(where (and (< #TS 1451621760000000000) (> #V 95))))");
       auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
       // auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}, {"service", {"9"}}});
       auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}});

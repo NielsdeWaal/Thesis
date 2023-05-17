@@ -31,9 +31,12 @@ public:
     std::uint64_t startTS{0}; // TODO Switch to optional to make 0 a possible value
     std::uint64_t endTS{0};
     std::uint64_t index{0};
+    std::string_view targetTag;
+    std::vector<std::string_view> tagValues;
     auto token = NextToken(expression);
     bool settingIndex = false;
     bool settingRange = false;
+    bool settingTags = false;
     std::vector<std::uint64_t> valStack;
     while (!(token.parsed.empty() && token.remaining.empty())) {
       using namespace SeriesQuery;
@@ -47,6 +50,9 @@ public:
       }
       if (token.parsed == "index") {
         settingIndex = true;
+      }
+      if(token.parsed == "tag") {
+        settingTags = true;
       }
 
       if (token.parsed == "and") {
@@ -85,8 +91,21 @@ public:
           add(query, UnsignedLiteralExpr{val});
         }
       }
+      if(token.parsed.starts_with("\"") && token.parsed.ends_with("\"")) {
+        if(settingTags) {
+          if(targetTag.empty()) {
+            targetTag = token.parsed;
+          } else {
+            tagValues.push_back(token.parsed);
+          }
+        }
+      }
 
       token = NextToken(token.remaining);
+    }
+
+    if(!targetTag.empty()) {
+      mLogger->info("Matching {} against {}", targetTag, fmt::join(tagValues, ", "));
     }
 
     auto nodes = mWriter.GetTreeForIndex(index).Query(startTS, endTS);
