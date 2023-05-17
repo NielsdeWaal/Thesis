@@ -282,11 +282,21 @@ public:
       mMetaData.ReloadIndexes();
 
       mQueryManager.SubmitQuery("(->>"
-                                "(range 1451606400000000000 1464713590000000000)"
                                 "(index 42)"
+                                "(range 1451606400000000000 1464713590000000000)"
                                 "(where (and (< #TS 1451621760000000000) (> #V 95))))");
 
-      // auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
+      // mQueryManager.SubmitQuery("(->>"
+      //                           "(index 50)"
+      //                           "(range 1451606400000000000 1464713590000000000)"
+      //                           "(where (and (< #TS 1451621760000000000) (> #V 95))))");
+
+      // mQueryManager.SubmitQuery("(->>"
+      //                           "(tag)"
+      //                           "(range 1451606400000000000 1464713590000000000)"
+      //                           "(where (and (< #TS 1451621760000000000) (> #V 95))))");
+      auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
+      // auto kvRes = mMetaData.
       // auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
       // assert(tagRes.has_value());
       // mLogger->warn("tag; {}", fmt::join(tagRes.value(), ", "));

@@ -10,6 +10,7 @@ public:
   QueryManager(EventLoop::EventLoop& ev, Writer<bufSize>& writer): mEv(ev), mWriter(writer) {
     mLogger = mEv.RegisterLogger("QueryManager");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
+    mQueries.resize(10);
   }
 
   // void CreateQuery(const std::string& query) {
@@ -98,11 +99,12 @@ public:
     }
 
     mLogger->info(
-        "New query: \n\t range: {} - {}\n\t index: {}\n\t nubmer of reads: {}",
+        "New query: \n\t range: {} - {}\n\t index: {}\n\t nubmer of reads: {}\n\t counter: {}",
         startTS,
         endTS,
         index,
-        addrs.size());
+        addrs.size(),
+        mQueryCounter);
     // QueryIO io{mEv, mWriter.GetNodeFileFd(), addrs, bufSize};
     // mQueries.emplace_back(, query);
     mQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize, query, mQueryCounter);
@@ -112,7 +114,7 @@ public:
   void OnEventLoopCallback() override {
     // for (QueryIO& op : mQueries) {
     for (Query& op : mQueries) {
-      if (op.IOBatch) {
+      if (!op.handled && op.IOBatch) {
         auto& res = op.IOBatch.GetResult();
 
         mLogger->info("Query finished for {} blocks", res.size());
@@ -133,10 +135,17 @@ public:
         }
 
         mLogger->info("Query done");
+        op.handled = true;
         // mQueryManager.ParseQuery("(and (< #TS 1451621760000000000) (> #V 95))");
 
-        std::erase_if(mQueries, [&](const Query& q){return q.id == op.id;});
+        // std::erase_if(mQueries, [&](const Query& q){return q.id == op.id;});
       }
+    }
+
+    // NOTE an erase call would cause other queries to be moved, invalidating pointers stored in eventloop
+    while(mQueries.front().handled){
+      mLogger->info("Removing old query");
+      mQueries.pop_front();
     }
   }
 
@@ -158,10 +167,16 @@ private:
     : IOBatch(ev, fd, addrs, blockSize)
     , QueryExpression(expression)
     , id(id) {}
+    Query() 
+    : IOBatch()
+    , QueryExpression()
+    , id(0)
+    {}
     QueryIO IOBatch;
     SeriesQuery::Expr QueryExpression;
     // Used together with query counter to allow queries to be deleted from queue
     std::uint64_t id;
+    bool handled{false};
   };
 
   struct Token {
@@ -290,7 +305,7 @@ private:
 
   EventLoop::EventLoop& mEv;
 
-  std::vector<Query> mQueries;
+  std::deque<Query> mQueries;
   // std::vector<QueryIO> mQueries;
   // std::vector<QueryIO> mRunningQueries;
 
