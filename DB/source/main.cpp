@@ -296,10 +296,12 @@ public:
       //                           "(range 1451606400000000000 1464713590000000000)"
       //                           "(where (and (< #TS 1451621760000000000) (> #V 95))))");
       auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
-      // auto kvRes = mMetaData.
+      // auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}, {"service", {"9"}}});
+      auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}});
       // auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
-      // assert(tagRes.has_value());
+      assert(kvRes.has_value());
       // mLogger->warn("tag; {}", fmt::join(tagRes.value(), ", "));
+      mLogger->warn("result tag: {}", kvRes.value());
 
       // // std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
       // std::optional<std::uint64_t> targetIndex = mMetaData.GetIndexByName(queryTarget);

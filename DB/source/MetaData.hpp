@@ -6,8 +6,8 @@
 #include "UringCommands.h"
 
 #include <algorithm>
-#include <string>
 #include <regex>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -50,7 +50,7 @@ private:
 
 class MetaData {
 public:
-  MetaData(EventLoop::EventLoop& ev) : mIdIndex(ev) {}
+  MetaData(EventLoop::EventLoop& ev): mIdIndex(ev) {}
 
   void Configure() {
     // First start index and have it read the indexing files
@@ -65,21 +65,21 @@ public:
   void ReloadIndexes() {
     std::regex delim{","};
     std::regex tagDelim{"="};
-    for(auto [k,v] : mIdIndex.GetIndexMapping()) {
-      std::vector<std::string> tags(std::sregex_token_iterator(k.begin(), k.end(), delim,-1), {});
-      for(const std::string& tag: tags) {
-        std::vector<std::string> kv(std::sregex_token_iterator(tag.begin(), tag.end(), tagDelim,-1), {});
-        if(kv.size() > 1) {
+    for (auto [k, v] : mIdIndex.GetIndexMapping()) {
+      std::vector<std::string> tags(std::sregex_token_iterator(k.begin(), k.end(), delim, -1), {});
+      for (const std::string& tag : tags) {
+        std::vector<std::string> kv(std::sregex_token_iterator(tag.begin(), tag.end(), tagDelim, -1), {});
+        if (kv.size() > 1) {
           // spdlog::info("Mapped {} {} to {}", kv.front(), kv.at(1), v);
           mInvertedIndex.Insert({kv.front(), kv.at(1)}, v);
         } else {
-          // spdlog::info("Metric: {}", kv.front());
+          // spdlog::info("Metric: {} bound to {}", kv.front(), v);
           mMetricMap.insert({v, kv.front()});
         }
         // spdlog::info("Mapped {} to {}", tag, v);
       }
     }
-   }
+  }
 
   std::optional<std::uint64_t> GetIndexByName(const std::string& name) {
     return mIdIndex.GetIndex(name);
@@ -114,14 +114,14 @@ public:
 
     // std::uint64_t index = mIdIndex.GetIndex();
     std::optional<std::uint64_t> index = mIdIndex.GetIndex(name);
-    if(!index.has_value()) {
+    if (!index.has_value()) {
       index = mIdIndex.InsertSeries(name);
     }
 
-    for(proto::Tag::Reader tag: request.getTagSet()) {
+    for (proto::Tag::Reader tag : request.getTagSet()) {
       mInvertedIndex.Insert({tag.getName().cStr(), tag.getValue().cStr()}, index.value());
     }
-    
+
     return index.value();
   }
 
@@ -169,6 +169,78 @@ public:
     // }
 
     // return std::vector<std::uint64_t>{postings.begin(), postings.end()};
+  }
+
+  std::optional<std::unordered_set<std::uint64_t>> FindSeries(const std::string& metricName) {
+    std::unordered_set<std::uint64_t> res;
+    for (auto& [k, v] : mMetricMap) {
+      if (v == metricName) {
+        res.insert(k);
+      }
+    }
+
+    if (res.empty()) {
+      return std::nullopt;
+    }
+
+    return res;
+  }
+
+  std::optional<std::uint64_t> GetIndex(
+      const std::string& metricName,
+      const std::vector<std::pair<std::string, std::vector<std::string>>>& kvMatches) {
+    auto metric = FindSeries(metricName);
+    if (!metric.has_value()) {
+      return std::nullopt;
+    }
+
+    std::vector<std::unordered_set<std::uint64_t>> postings;
+    for(const auto& match : kvMatches) {
+      for (const auto& val : match.second) {
+        postings.push_back(mInvertedIndex.GetPostings({match.first, val}));
+      }
+    }
+    if(postings.empty()) {
+      return std::nullopt;
+    }
+    spdlog::warn("postings: {}", fmt::join(postings, ", "));
+    spdlog::warn("Metrics: {}", fmt::join(metric.value(), ", "));
+
+    std::unordered_set<std::uint64_t> result;
+    for(auto& postingList: postings) {
+      auto res = setintersection(postingList, metric.value());
+      spdlog::warn("result: {}", fmt::join(res, ", "));
+      result.insert(res.begin(), res.end());
+    }
+    if(result.size() > 1) {
+      spdlog::error("Resulting tag set size larger than 1, only returning first id");
+    }
+    // auto it = postings.begin();
+    // std::advance(it, 1);
+    // std::unordered_set<std::uint64_t> start = setintersection(metric.value(), *it);
+    // auto result = std::reduce(postings.begin(), postings.end(), start, [&](auto acc, auto posting) {
+    //   return setintersection(acc, posting);
+    // });
+    // spdlog::warn("result: {}", fmt::join(result, ", "));
+    // auto it = postings.begin();
+    // std::advance(it, 1);
+    // std::unordered_set<std::uint64_t> start = setintersection(postings.front(), *it);
+    // // TODO Check if postings.begin here works correctly, might have to be changed to it
+    // auto result = std::reduce(postings.begin(), postings.end(), start, [&](auto acc, auto posting) {
+    //   return setintersection(acc, posting);
+    // });
+    // spdlog::warn("tag: {}", fmt::join(result, ", "));
+    // assert(result.size() == 1);
+    return *(result.begin());
+    // std::vector<std::optional<std::vector<std::uint64_t>>> kvRes;
+    // std::transform(
+    //     kvMatches.begin(),
+    //     kvMatches.end(),
+    //     kvRes.begin(),
+    //     [&](const std::pair<std::string, std::vector<std::string>> kvs) { return QueryValues(kvs.first, kvs.second); });
+    // kvRes.erase(std::remove_if(kvRes.begin(), kvRes.end(), [&](auto& res) { return !res.has_value(); }), kvRes.end());
+    // std::vector<std::unordered_set<std::uint64_t>> allIndexes;
+    // std::transform(kvRes.begin(), kvRes.end(), allIndexes, [&](const std::vector<std::optional<std::uint64_t>> indexes){});
   }
 
 private:
