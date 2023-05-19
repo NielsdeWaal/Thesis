@@ -306,8 +306,8 @@ public:
       mQueryManager.SubmitQuery("(->>"
                                 "(metric \"usage_user\")"
                                 "(tag \"hostname\" '(\"host_0\"))"
-                                // "(range 1464710340000000000 1464720460000000000)"
-                                "(groupby 1h count))");
+                                "(range 1464710340000000000 1464720460000000000)"
+                                "(groupby 1h avg))");
       auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
       // auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}, {"service", {"9"}}});
       auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}});

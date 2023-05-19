@@ -342,13 +342,6 @@ private:
     Query(): IOBatch(), QueryExpression(), id(0) {}
     QueryIO IOBatch;
     SeriesQuery::Expr QueryExpression;
-    // TODO
-    // post processing
-    // group by
-    // - take first timestamp
-    // - calculate bins which are X apart
-    // - apply operation on bins
-    // - return values
 
     std::uint64_t startTS{0};
     std::uint64_t endTS{0};
@@ -364,44 +357,6 @@ private:
     std::string_view parsed;
     std::string_view remaining;
   };
-
-  SeriesQuery::Expr ParseQuery(std::string_view buf) {
-    SeriesQuery::Expr query;
-    auto token = NextToken(buf);
-    while (!token.remaining.empty()) {
-      using namespace SeriesQuery;
-      mLogger->info("Token: {}", token.parsed);
-
-      if (token.parsed == "and") {
-        // mLogger->info("And token");
-        add(query, AndExpr{});
-      }
-      if (token.parsed == "<") {
-        add(query, LtExpr{});
-      }
-      if (token.parsed == ">") {
-        add(query, GtExpr{});
-      }
-
-      if (token.parsed == "#TS") {
-        add(query, TimestampLiteral{});
-      }
-      if (token.parsed == "#V") {
-        add(query, ValueLiteral{});
-      }
-
-      if (token.parsed == "(" || token.parsed == ")") {
-      }
-      if (auto [isInt, val] = parse_int(token.parsed); isInt) {
-        // mLogger->info("Int token: {}", val);
-        add(query, UnsignedLiteralExpr{val});
-      }
-
-      token = NextToken(token.remaining);
-    }
-
-    return query;
-  }
 
   [[nodiscard]] constexpr Token NextToken(std::string_view input) {
     constexpr auto is_eol = [](auto character) { return character == '\n' || character == '\r'; };
@@ -483,26 +438,13 @@ private:
     return buf;
   }
 
-  // inline std::tuple<std::string_view, std::size_t, bool> next_token(std::string_view buff);
-
-  // inline std::tuple<int, bool> integer(std::string_view token);
-
-  // void EvaluateStack(
-  //     std::stack<Expression*>& stack,
-  //     std::vector<std::unordered_map<std::string_view, std::string>> variables);
-
   EventLoop::EventLoop& mEv;
 
   std::deque<Query> mQueries;
-  // std::vector<QueryIO> mQueries;
-  // std::vector<QueryIO> mRunningQueries;
 
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
   MetaData& mMetadata;
   Writer<bufSize>& mWriter;
-  // std::deque<Expression> mExpressions;
-  // std::stack<Expression*> mParseStack;
-  // std::vector<std::unordered_map<std::string_view, std::string>> mScopedVars;
 
   std::uint64_t mQueryCounter{0};
 

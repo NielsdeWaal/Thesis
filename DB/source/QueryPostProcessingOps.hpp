@@ -2,7 +2,9 @@
 #define __POST_PROCESSING_OPS
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <optional>
 #include <variant>
 
 class GroupOp {
@@ -12,7 +14,7 @@ public:
   virtual std::uint64_t GetVal() const = 0;
 };
 
-class MaxOp  {
+class MaxOp {
 public:
   MaxOp() = default;
   MaxOp(std::uint64_t initial): val(initial) {}
@@ -47,33 +49,36 @@ public:
   }
 
   void Add(std::uint64_t newVal) {
-    val = std::min(newVal, val);
+    if (!val.has_value()) {
+      val = newVal;
+    } else {
+      val = std::min(newVal, val.value());
+    }
   }
 
   std::uint64_t GetVal() const {
-    return val;
+    return val.value();
   }
 
 private:
-  std::uint64_t val{0};
+  std::optional<std::uint64_t> val;
 };
 
 class AvgOp {
 public:
   AvgOp() = default;
-  AvgOp(std::uint64_t initial): val(initial) {}
 
   void Add(std::uint64_t newVal) {
-    val = (newVal + count * val) / count + 1;
+    val = (newVal + (count * val)) / (count + 1);
     ++count;
   }
 
   std::uint64_t GetVal() const {
-    return val;
+    return std::floor(val);
   }
 
 private:
-  std::uint64_t val{0};
+  double val{0};
   std::size_t count{0};
 };
 
