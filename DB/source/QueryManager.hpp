@@ -3,11 +3,17 @@
 
 #include "EventLoop.h"
 #include "Query.hpp"
+#include "QueryPostProcessingOps.hpp"
 #include "Writer.hpp"
+
+#include <variant>
 
 template<std::size_t bufSize> class QueryManager: EventLoop::IEventLoopCallbackHandler {
 public:
-  QueryManager(EventLoop::EventLoop& ev, Writer<bufSize>& writer): mEv(ev), mWriter(writer) {
+  QueryManager(EventLoop::EventLoop& ev, Writer<bufSize>& writer, MetaData& metadata)
+  : mEv(ev)
+  , mWriter(writer)
+  , mMetadata(metadata) {
     mLogger = mEv.RegisterLogger("QueryManager");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     mQueries.resize(10);
@@ -31,12 +37,16 @@ public:
     std::uint64_t startTS{0}; // TODO Switch to optional to make 0 a possible value
     std::uint64_t endTS{0};
     std::uint64_t index{0};
+    std::string_view metricName;
     std::string_view targetTag;
-    std::vector<std::string_view> tagValues;
+    std::vector<std::string> tagValues;
     auto token = NextToken(expression);
     bool settingIndex = false;
     bool settingRange = false;
     bool settingTags = false;
+    bool settingMetric = false;
+    bool settingGroup = false;
+    GroupByOp group;
     std::vector<std::uint64_t> valStack;
     while (!(token.parsed.empty() && token.remaining.empty())) {
       using namespace SeriesQuery;
@@ -51,8 +61,14 @@ public:
       if (token.parsed == "index") {
         settingIndex = true;
       }
-      if(token.parsed == "tag") {
+      if (token.parsed == "tag") {
         settingTags = true;
+      }
+      if (token.parsed == "metric") {
+        settingMetric = true;
+      }
+      if (token.parsed == "groupby") {
+        settingGroup = true;
       }
 
       if (token.parsed == "and") {
@@ -75,6 +91,7 @@ public:
 
       if (token.parsed == "(" || token.parsed == ")") {
       }
+
       if (auto [isInt, val] = parse_int(token.parsed); isInt) {
         // mLogger->info("Int token: {}", val);
         if (settingRange) {
@@ -91,21 +108,62 @@ public:
           add(query, UnsignedLiteralExpr{val});
         }
       }
-      if(token.parsed.starts_with("\"") && token.parsed.ends_with("\"")) {
-        if(settingTags) {
-          if(targetTag.empty()) {
-            targetTag = token.parsed;
+
+      if (token.parsed.starts_with("\"") && token.parsed.ends_with("\"")) {
+        if (settingTags) {
+          if (targetTag.empty()) {
+            targetTag = StripQuotes(token.parsed);
           } else {
-            tagValues.push_back(token.parsed);
+            tagValues.push_back(std::string{StripQuotes(token.parsed)});
           }
+        } else if (settingMetric) {
+          metricName = StripQuotes(token.parsed);
+          settingMetric = false;
         }
+      }
+
+      if (settingGroup && token.parsed.ends_with("h")) {
+        token.parsed.remove_suffix(1);
+        if (auto [isInt, val] = parse_int(token.parsed); isInt) {
+          group.GroupInterval = val * 3600000000000;
+        }
+      } else if (settingGroup) {
+        if (token.parsed == "max") {
+          group.type = GroupByOp::Type::MAX;
+        } else if(token.parsed == "min") {
+          group.type = GroupByOp::Type::MIN;
+        } else if(token.parsed == "avg") {
+          group.type = GroupByOp::Type::AVG;
+        } else if(token.parsed == "count") {
+          group.type = GroupByOp::Type::COUNT;
+        }
+      }
+
+      if (settingGroup && group.GroupInterval != 0 && group.type != GroupByOp::Type::INVALID) {
+        mLogger->info("Grouping data for every {} on op: {}", group.GroupInterval, static_cast<int>(group.type));
+        settingGroup = false;
       }
 
       token = NextToken(token.remaining);
     }
 
-    if(!targetTag.empty()) {
+    if (!targetTag.empty()) {
       mLogger->info("Matching {} against {}", targetTag, fmt::join(tagValues, ", "));
+    }
+
+    if (index == 0) {
+      auto res = mMetadata.GetIndex(std::string{metricName}, {{std::string{targetTag}, tagValues}});
+      if (res.has_value()) {
+        index = res.value();
+      } else {
+        spdlog::error("No index found for {} and {}", metricName, targetTag);
+      }
+    }
+
+    if (startTS == 0 && endTS == 0) {
+      auto* root = mWriter.GetTreeForIndex(index).GetRoot();
+      startTS = root->GetNodeStart();
+      endTS = root->GetNodeEnd();
     }
 
     auto nodes = mWriter.GetTreeForIndex(index).Query(startTS, endTS);
@@ -118,15 +176,16 @@ public:
     }
 
     mLogger->info(
-        "New query: \n\t range: {} - {}\n\t index: {}\n\t nubmer of reads: {}\n\t counter: {}",
+        "New query: \n\t range: {} - {}\n\t metric: {}\n\t index: {}\n\t nubmer of reads: {}\n\t counter: {}",
         startTS,
         endTS,
+        metricName,
         index,
         addrs.size(),
         mQueryCounter);
     // QueryIO io{mEv, mWriter.GetNodeFileFd(), addrs, bufSize};
     // mQueries.emplace_back(, query);
-    mQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize, query, mQueryCounter);
+    mQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize, query, startTS, endTS, group, mQueryCounter);
     ++mQueryCounter;
   }
 
@@ -143,13 +202,88 @@ public:
           resultBuffers.emplace_back(std::move(resOp.buf));
         });
 
+        std::vector<GroupOps> postGroups;
+        std::uint64_t binTSOffset = op.startTS + op.postProcessing.GroupInterval;
+        std::uint64_t binCounter = 0;
+        if (op.postProcessing.type != GroupByOp::Type::INVALID) {
+          mLogger->warn(
+              "Group by detected, binning into {} groups of {} hour/ {} nanoseconds",
+              (op.endTS - op.startTS) / op.postProcessing.GroupInterval,
+              op.postProcessing.GroupInterval * 3600000000000,
+              op.postProcessing.GroupInterval);
+          postGroups.resize(((op.endTS - op.startTS) / op.postProcessing.GroupInterval) + 1);
+          for (auto& group : postGroups) {
+            switch(op.postProcessing.type) {
+              case GroupByOp::Type::MAX: {
+                group = MaxOp();
+                break;
+              }
+              case GroupByOp::Type::MIN: {
+                group = MinOp();
+                break;
+              }
+              case GroupByOp::Type::AVG: {
+                group = AvgOp();
+                break;
+              }
+              case GroupByOp::Type::COUNT: {
+                group = CountOp();
+                break;
+              }
+              case GroupByOp::Type::INVALID: {
+                mLogger->critical("Cannot create group op from INVALID type");
+                assert(false);
+              }
+            }
+          }
+        }
+
         using namespace SeriesQuery;
         for (EventLoop::DmaBuffer& buf : resultBuffers) {
           DataPoint* points = ( DataPoint* ) buf.GetPtr();
           for (std::size_t i = 0; i < memtableSize; ++i) {
-            if (evaluate(op.QueryExpression, points[i].timestamp, points[i].value)) {
-              mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+            if (points[i].timestamp >= op.startTS && points[i].timestamp <= op.endTS) {
+              if (!std::holds_alternative<std::monostate>(op.QueryExpression)
+                  && !evaluate(op.QueryExpression, points[i].timestamp, points[i].value)) {
+                continue;
+              }
+              if (op.postProcessing.type != GroupByOp::Type::INVALID) {
+                if (points[i].timestamp > binTSOffset) {
+                  ++binCounter;
+                  binTSOffset += op.postProcessing.GroupInterval;
+                  mLogger->info("Switching to bin {}", binCounter);
+                }
+                // mLogger->info("Assigning to group: {}", binCounter);
+                // postGroups.at(binCounter).Add(points[i].value);
+                std::visit(
+                    overloaded{
+                        [&](MaxOp& arg) { arg.Add(points[i].value); },
+                        [&](MinOp& arg) { arg.Add(points[i].value); },
+                        [&](AvgOp& arg) { arg.Add(points[i].value); },
+                        [&](CountOp& arg) { arg.Add(points[i].value); },
+                        []([[maybe_unused]] std::monostate) { assert(false); },
+                    },
+                    postGroups.at(binCounter));
+              } else {
+                mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+              }
             }
+          }
+        }
+
+        if (postGroups.size() > 0) {
+          for (auto& val : postGroups) {
+            // mLogger->info("Bucket val: {}", val.GetVal());
+            std::uint64_t opRes = std::visit(
+                overloaded{
+                    [&](MaxOp& arg) { return arg.GetVal(); },
+                    [&](MinOp& arg) { return arg.GetVal(); },
+                    [&](AvgOp& arg) { return arg.GetVal(); },
+                    [&](CountOp& arg) { return arg.GetVal(); },
+                    []([[maybe_unused]] std::monostate) -> std::uint64_t { assert(false); return 0;},
+                },
+                val);
+            mLogger->info("Bucket val: {}", opRes);
           }
         }
 
@@ -162,7 +296,7 @@ public:
     }
 
     // NOTE an erase call would cause other queries to be moved, invalidating pointers stored in eventloop
-    while(mQueries.front().handled){
+    while (mQueries.front().handled) {
       mLogger->info("Removing old query");
       mQueries.pop_front();
     }
@@ -173,6 +307,19 @@ private:
     std::uint64_t timestamp;
     std::int64_t value;
   };
+
+  struct GroupByOp {
+    enum class Type : std::uint8_t {
+      INVALID = 0,
+      MAX,
+      MIN,
+      AVG,
+      COUNT,
+    };
+
+    Type type{Type::INVALID};
+    std::uint64_t GroupInterval{0};
+  };
   // TODO attach metadata to measure latency
   // TODO Support subqueries for joining operations
   struct Query {
@@ -182,17 +329,32 @@ private:
         const std::vector<std::uint64_t>& addrs,
         std::size_t blockSize,
         SeriesQuery::Expr expression,
+        std::uint64_t start,
+        std::uint64_t end,
+        GroupByOp op,
         std::uint64_t id)
     : IOBatch(ev, fd, addrs, blockSize)
     , QueryExpression(expression)
+    , startTS(start)
+    , endTS(end)
+    , postProcessing(op)
     , id(id) {}
-    Query() 
-    : IOBatch()
-    , QueryExpression()
-    , id(0)
-    {}
+    Query(): IOBatch(), QueryExpression(), id(0) {}
     QueryIO IOBatch;
     SeriesQuery::Expr QueryExpression;
+    // TODO
+    // post processing
+    // group by
+    // - take first timestamp
+    // - calculate bins which are X apart
+    // - apply operation on bins
+    // - return values
+
+    std::uint64_t startTS{0};
+    std::uint64_t endTS{0};
+
+    GroupByOp postProcessing;
+
     // Used together with query counter to allow queries to be deleted from queue
     std::uint64_t id;
     bool handled{false};
@@ -314,6 +476,13 @@ private:
     }
   }
 
+  std::string_view StripQuotes(std::string_view buf) {
+    assert(buf.starts_with("\"") && buf.ends_with("\""));
+    buf.remove_suffix(1);
+    buf.remove_prefix(1);
+    return buf;
+  }
+
   // inline std::tuple<std::string_view, std::size_t, bool> next_token(std::string_view buff);
 
   // inline std::tuple<int, bool> integer(std::string_view token);
@@ -329,6 +498,7 @@ private:
   // std::vector<QueryIO> mRunningQueries;
 
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
+  MetaData& mMetadata;
   Writer<bufSize>& mWriter;
   // std::deque<Expression> mExpressions;
   // std::stack<Expression*> mParseStack;

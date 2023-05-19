@@ -67,7 +67,7 @@ public:
   , mWriter(mEv, mMetaData, maxOutstandingIO)
   , mIngestPort(mEv, mWriter)
   , mManagement(mEv, mMetaData)
-  , mQueryManager(mEv, mWriter) {
+  , mQueryManager(mEv, mWriter, mMetaData) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     // mInputs = InputManager(mEv, "../large-5");
@@ -291,11 +291,23 @@ public:
       //                           "(range 1451606400000000000 1464713590000000000)"
       //                           "(where (and (< #TS 1451621760000000000) (> #V 95))))");
 
+      // mQueryManager.SubmitQuery("(->>"
+      //                           "(metric \"usage_user\")"
+      //                           "(tag \"hostname\" '(\"host_0\"))"
+      //                           "(range 1451606400000000000 1464713590000000000)"
+      //                           "(where (and (< #TS 1451621760000000000) (> #V 95))))");
+
+      // mQueryManager.SubmitQuery("(->>"
+      //                           "(metric \"usage_user\")"
+      //                           "(tag \"hostname\" '(\"host_0\"))"
+      //                           // "(range 1464710340000000000 1464720460000000000)"
+      //                           "(groupby 1h max))");
+
       mQueryManager.SubmitQuery("(->>"
-                                "(index 50)"
-                                "(tag \"hostname\" '(\"host_0\" \"host_1\"))"
-                                "(range 1451606400000000000 1464713590000000000)"
-                                "(where (and (< #TS 1451621760000000000) (> #V 95))))");
+                                "(metric \"usage_user\")"
+                                "(tag \"hostname\" '(\"host_0\"))"
+                                // "(range 1464710340000000000 1464720460000000000)"
+                                "(groupby 1h count))");
       auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
       // auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}, {"service", {"9"}}});
       auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}});

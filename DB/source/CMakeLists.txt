@@ -23,6 +23,7 @@ add_executable(FrogFish
   MetaData.hpp
   Query.hpp
   QueryManager.hpp
+  QueryPostProcessingOps.hpp
   # Query.cpp
 
   robin_hood.h
