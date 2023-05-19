@@ -50,7 +50,7 @@ public:
     std::vector<std::uint64_t> valStack;
     while (!(token.parsed.empty() && token.remaining.empty())) {
       using namespace SeriesQuery;
-      mLogger->info("Token: {}", token.parsed);
+      // mLogger->info("Token: {}", token.parsed);
       if (token.parsed == "->>") {
         mLogger->info("Generating new query");
       }
@@ -122,19 +122,25 @@ public:
         }
       }
 
-      if (settingGroup && token.parsed.ends_with("h")) {
+      if (settingGroup && (token.parsed.ends_with("h") || token.parsed.ends_with("m"))) {
+        auto multiplier = TimeMultiplier::HOUR;
+        if (token.parsed.ends_with("h")) {
+          multiplier = TimeMultiplier::HOUR;
+        } else if (token.parsed.ends_with("m")) {
+          multiplier = TimeMultiplier::MINUTE;
+        }
         token.parsed.remove_suffix(1);
         if (auto [isInt, val] = parse_int(token.parsed); isInt) {
-          group.GroupInterval = val * 3600000000000;
+          group.GroupInterval = val * static_cast<std::uint64_t>(multiplier);
         }
       } else if (settingGroup) {
         if (token.parsed == "max") {
           group.type = GroupByOp::Type::MAX;
-        } else if(token.parsed == "min") {
+        } else if (token.parsed == "min") {
           group.type = GroupByOp::Type::MIN;
-        } else if(token.parsed == "avg") {
+        } else if (token.parsed == "avg") {
           group.type = GroupByOp::Type::AVG;
-        } else if(token.parsed == "count") {
+        } else if (token.parsed == "count") {
           group.type = GroupByOp::Type::COUNT;
         }
       }
@@ -156,7 +162,7 @@ public:
       if (res.has_value()) {
         index = res.value();
       } else {
-        spdlog::error("No index found for {} and {}", metricName, targetTag);
+        mLogger->error("No index found for {} and {}", metricName, targetTag);
       }
     }
 
@@ -209,11 +215,11 @@ public:
           mLogger->warn(
               "Group by detected, binning into {} groups of {} hour/ {} nanoseconds",
               (op.endTS - op.startTS) / op.postProcessing.GroupInterval,
-              op.postProcessing.GroupInterval * 3600000000000,
+              op.postProcessing.GroupInterval * static_cast<std::uint64_t>(TimeMultiplier::HOUR),
               op.postProcessing.GroupInterval);
           postGroups.resize(((op.endTS - op.startTS) / op.postProcessing.GroupInterval) + 1);
           for (auto& group : postGroups) {
-            switch(op.postProcessing.type) {
+            switch (op.postProcessing.type) {
               case GroupByOp::Type::MAX: {
                 group = MaxOp();
                 break;
@@ -251,7 +257,7 @@ public:
                 if (points[i].timestamp > binTSOffset) {
                   ++binCounter;
                   binTSOffset += op.postProcessing.GroupInterval;
-                  mLogger->info("Switching to bin {}", binCounter);
+                  mLogger->trace("Switching to bin {}", binCounter);
                 }
                 // mLogger->info("Assigning to group: {}", binCounter);
                 // postGroups.at(binCounter).Add(points[i].value);
@@ -280,7 +286,10 @@ public:
                     [&](MinOp& arg) { return arg.GetVal(); },
                     [&](AvgOp& arg) { return arg.GetVal(); },
                     [&](CountOp& arg) { return arg.GetVal(); },
-                    []([[maybe_unused]] std::monostate) -> std::uint64_t { assert(false); return 0;},
+                    []([[maybe_unused]] std::monostate) -> std::uint64_t {
+                      assert(false);
+                      return 0;
+                    },
                 },
                 val);
             mLogger->info("Bucket val: {}", opRes);
@@ -306,6 +315,11 @@ private:
   struct DataPoint {
     std::uint64_t timestamp;
     std::int64_t value;
+  };
+
+  enum class TimeMultiplier : std::uint64_t {
+    HOUR = 3600000000000,
+    MINUTE = 60000000000,
   };
 
   struct GroupByOp {

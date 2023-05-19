@@ -203,13 +203,13 @@ public:
     if(postings.empty()) {
       return std::nullopt;
     }
-    spdlog::warn("postings: {}", fmt::join(postings, ", "));
-    spdlog::warn("Metrics: {}", fmt::join(metric.value(), ", "));
+    // spdlog::warn("postings: {}", fmt::join(postings, ", "));
+    // spdlog::warn("Metrics: {}", fmt::join(metric.value(), ", "));
 
     std::unordered_set<std::uint64_t> result;
     for(auto& postingList: postings) {
       auto res = setintersection(postingList, metric.value());
-      spdlog::warn("result: {}", fmt::join(res, ", "));
+      // spdlog::warn("result: {}", fmt::join(res, ", "));
       result.insert(res.begin(), res.end());
     }
     if(result.size() > 1) {
