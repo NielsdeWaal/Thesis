@@ -70,15 +70,7 @@ public:
   , mQueryManager(mEv, mWriter, mMetaData) {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
-    // mInputs = InputManager(mEv, "../large-5");
-    // mFiles.reserve(4);
-    // func();
-    // Writer();
-    // auto _ = mTestingHelper.SetLoadingData("../large.arrow");
-    // auto _ = mTestingHelper.SetLoadingData("../small-1.capfile");
-    // auto _ = mTestingHelper.SetLoadingData("../large.capfile");
     IngestionTask();
-
 
     // FIXME move to test
     // MetaData data;
@@ -113,10 +105,6 @@ public:
     co_await mMetaData.Startup();
     co_await mWriter.Configure();
     mLoadingStarted = true;
-    // co_await mInputs.ReadFromFile(mTestingHelper.GetFilename());
-    // mInputs.ReadFromArrowFile(mTestingHelper.GetFilename());
-    // co_await mInputs.ReadFromCapnpFile(mTestingHelper.GetFilename());
-    // co_await mFileManager.SetDataFiles(4);
 
     mStarted = true;
     // auto start = Common::MONOTONIC_CLOK::Now();
@@ -125,133 +113,6 @@ public:
     auto loadingLatency = mTestingHelper.SetPrepareQuery();
     mLogger->info("Loading data took: {}", loadingLatency);
   }
-
-  // EventLoop::uio::task<> Writer(InfluxMessage& msg) {
-  // EventLoop::uio::task<> Writer(const IMessage& msg) {
-  //   // EventLoop::uio::task<> Writer(const proto::Batch::Message& msg) {
-  //   // mLogger->info("Writing for {} measurements", msg.measurements.size());
-  //   // mLogger->info("Ingesting {}", msg.getMetric());
-  //   for (const InfluxKV& measurement : msg.measurements) {
-  //     if (!mTrees.contains(measurement.index)) {
-  //       mLogger->info("Creating structures for new series");
-  //       // mTrees[measurement.index] = MetricTree{.memtable= Memtable<NULLCompressor, bufSize>{mEv}};
-  //       mTrees[measurement.index] = std::make_unique<MetricTree>(mEv);
-  //     }
-  //     auto& db = mTrees[measurement.index];
-  //     // FIXME for now we only support longs
-  //     if (std::holds_alternative<InfluxMValue>(measurement.value)) {
-  //       // db.memtable[db.ctr] =
-  //       //     DataPoint{.timestamp = msg.ts, .value =
-  //       //     std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value)};
-  //       // ++db.ctr;
-  //       db->memtable.Insert(msg.ts, std::get<std::int64_t>(std::get<InfluxMValue>(measurement.value).value));
-  //       if (db->memtable.IsFull()) {
-  //         // EventLoop::DmaBuffer buf = mEv.AllocateDmaBuffer(bufSize);
-  //         auto [startTS, endTS] = db->memtable.GetTimeRange();
-  //         db->memtable.Flush(db->flushBuf);
-
-  //         // EventLoop::DmaBuffer buf = db->memtable.Flush();
-  //         // EventLoop::DmaBuffer logBuf = mEv.AllocateDmaBuffer(512);
-
-  //         // std::memcpy(buf.GetPtr(), db.memtable.data(), bufSize);
-  //         mIOQueue.push_back(WriteOperation{.buf = db->flushBuf, .pos = mFileOffset, .type = File::NODE_FILE});
-
-  //         // FIXME handle case where insertion fails for whatever reason
-  //         // db.tree.Insert(db.memtable.front().timestamp, db.memtable.back().timestamp, mFileOffset);
-  //         db->tree.Insert(startTS, endTS, mFileOffset);
-
-  //         mLogger->info(
-  //             "Flushing memtable for {} (index: {} ts: {} - {}) to file at addr: {}",
-  //             msg.name + "." + measurement.name,
-  //             measurement.index,
-  //             startTS,
-  //             endTS,
-  //             mFileOffset);
-
-  //         LogPoint* log = ( LogPoint* ) db->logBuf.GetPtr();
-  //         log->start = startTS;
-  //         log->end = endTS;
-  //         log->offset = mFileOffset;
-  //         log->index = measurement.index;
-  //         // co_await mLogFile.WriteAt(logBuf, logOffset);
-  //         mIOQueue.push_back(WriteOperation{.buf = db->logBuf, .pos = mLogOffset, .type = File::LOG_FILE});
-
-  //         mFileOffset += bufSize;
-  //         mLogOffset += 512;
-  //         db->ctr = 0;
-  //       }
-  //     } else {
-  //       // Something must have gone wrong during parsing
-  //       assert(false);
-  //     }
-  //     ++mIngestionCounter;
-  //   }
-  //   co_return;
-  // }
-
-  // EventLoop::uio::task<> HandleCapnpIngestion() {
-  //   if (mStarted) {
-  //     auto batch = mInputs.GetCapReader();
-  //     std::string name;
-  //     name.reserve(255);
-  //     if (batch.has_value()) {
-  //       if (batch.value().size() == 0) {
-  //         mIngestionDone = true;
-  //         // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
-  //         mIngestionLatency = mTestingHelper.SetPrepareQuery();
-  //         mLogger->info("Ingestion took: {}", mIngestionLatency);
-  //         co_return;
-  //       }
-  //       capnp::FlatArrayMessageReader message(batch.value());
-  //       proto::Batch::Reader chunk = message.getRoot<proto::Batch>();
-  //       for (const proto::Batch::Message::Reader msg : chunk.getRecordings()) {
-  //         name = msg.getMetric();
-  //         name.append(",");
-  //         auto tags = msg.getTags();
-  //         std::for_each(tags.begin(), tags.end(), [&](proto::Tag::Reader tag) {
-  //           name.append(std::string{tag.getName().cStr()} + "=" + tag.getValue().cStr() + ",");
-  //         });
-  //         for (const proto::Batch::Message::Measurement::Reader measurement : msg.getMeasurements()) {
-  //           name.append(measurement.getName());
-
-  //           ++mIngestionCounter;
-
-  //           mWriter.Insert(name, msg.getTimestamp(), measurement.getValue());
-
-  //           name.resize(name.size() - measurement.getName().size());
-  //         }
-  //       }
-  //       name.clear();
-  //       mInputs.PushCapOffset(const_cast<capnp::word*>(message.getEnd()));
-  //     }
-  //   }
-  //   // if (!mLoadingStarted && mTestingHelper.IsLoadingData()) {
-  //   //   co_await IngestionTask();
-  //   // }
-  //   co_return;
-  // }
-
-  // EventLoop::uio::task<> HandleIngestion() {
-  //   if (mStarted) {
-  //     std::size_t chunkSize{1000};
-  //     auto chunk = co_await mInputs.ReadArrowChunk();
-  //     // auto& chunk = co_await mInputs.ReadCapChunk(chunkSize);
-  //     // std::optional<std::vector<IMessage>> chunk = co_await mInputs.ReadArrowChunk();
-  //     if (chunk.has_value()) {
-  //       // mLogger->info("Reading chunk of size: {}", chunk->size());
-  //       for (const auto& measurement : *chunk) {
-  //         // for (const auto& measurement : chunk) {
-  //         co_await Writer(measurement);
-  //       }
-  //     } else {
-  //       // Finished with ingestion - switching to query tests
-  //       mIngestionDone = true;
-  //       // mLogger->info("Ingestion done at: {}", mTestingHelper.GetIngestionLatency());
-  //       mIngestionLatency = mTestingHelper.SetPrepareQuery();
-  //       mLogger->info("Ingestion took: {}", mIngestionLatency);
-  //     }
-  //   }
-  // }
 
   void OnEventLoopCallback() override {
     if (mTestingHelper.IsIngesting()) {
@@ -300,14 +161,20 @@ public:
       // mQueryManager.SubmitQuery("(->>"
       //                           "(metric \"usage_user\")"
       //                           "(tag \"hostname\" '(\"host_0\"))"
-      //                           // "(range 1464710340000000000 1464720460000000000)"
+      //                           "(range 1464710340000000000 1464720460000000000)"
       //                           "(groupby 1h max))");
+
+      // mQueryManager.SubmitQuery("(->>"
+      //                           "(metric \"usage_user\")"
+      //                           "(tag \"hostname\" '(\"host_0\"))"
+      //                           "(range 1464710340000000000 1464720460000000000)"
+      //                           "(groupby 1h avg))");
 
       mQueryManager.SubmitQuery("(->>"
                                 "(metric \"usage_user\")"
                                 "(tag \"hostname\" '(\"host_0\"))"
                                 "(range 1464710340000000000 1464720460000000000)"
-                                "(groupby 1h avg))");
+                                "(groupby 10m avg))");
       auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
       // auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}, {"service", {"9"}}});
       auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}});
@@ -327,100 +194,12 @@ public:
       // }
       // mLogger->info("Executing query for {} (index: {})", queryTarget, targetIndex.value());
 
-      // auto nodes = mTrees[*targetIndex]->tree.Query(1464660970000000000, 1464739190000000000);
-      // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
-      // auto nodes = mWriter.GetTreeForIndex(targetIndex.value()).Query(1451606400000000000, 1452917110000000000);
-      // auto nodes = mWriter.GetTreeForIndex(targetIndex.value()).Query(1451606400000000000, 1464713590000000000);
-      // // auto nodes = mTrees[*targetIndex]->tree.Query(1451606400000000000, 1452917110000000000);
-      // assert(nodes.has_value());
-
-      // std::vector<std::uint64_t> addrs;
-      // addrs.reserve(nodes->size());
-      // // std::transform(nodes->begin(), nodes->end(), addrs.begin(), [](const TimeRange_t& tr){return tr.ptr;});
-      // for (const TimeRange_t& tr : *nodes) {
-      //   addrs.push_back(tr.ptr);
-      // }
-
-      // mLogger->info("Query requires {} reads, starting...", addrs.size());
-
-      // auto filter = [](SeriesQuery::UnsignedLiteralExpr ts, SeriesQuery::SignedLiteralExpr val) {
-      //   using namespace SeriesQuery;
-      //   return evaluate(
-      //       Expr(AndExpr{GtExpr{ts, UnsignedLiteralExpr{1452606760000000000}}, GtExpr{val, SignedLiteralExpr{99}}}));
-      // };
       // mTestingHelper.SetQuerying(queryTarget, filter);
       // mTestingHelper.SetQuerying(queryTarget);
       mTestingHelper.Finalize();
 
-      // TODO support multiple starting multiple queries
-      // mRunningQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize);
       mQueryStarted = true;
     }
-
-    // if (!mRunningQueries.empty() && mTestingHelper.IsQuerying()) {
-    //   // if (!mRunningQueries.empty()) {
-    //   // poll the running queries, set mQueringDone when all have been resolved
-    //   for (QueryIO& op : mRunningQueries) {
-    //     if (op) {
-    //       auto& res = op.GetResult();
-
-    //       mLogger->info("Query finished for {} blocks", res.size());
-
-    //       std::vector<EventLoop::DmaBuffer> resultBuffers;
-    //       std::for_each(res.begin(), res.end(), [&resultBuffers](IOOP& resOp) {
-    //         resultBuffers.emplace_back(std::move(resOp.buf));
-    //       });
-
-    //       using namespace SeriesQuery;
-    //       // SeriesQuery::Expr query = AndExpr{
-    //       //     LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
-    //       //     GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}};
-    //       // Expr q = AndExpr{};
-    //       // add(query, LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}});
-    //       // add(q, LtExpr{});
-    //       // add(q, TimestampLiteral{});
-    //       // add(q, UnsignedLiteralExpr{1451621760000000000});
-    //       // add(q, GtExpr{});
-    //       // add(q, ValueLiteral{});
-    //       // add(q, SignedLiteralExpr{95});
-
-    //       // const Expr query = mQueryManager.ParseQuery("(and (< #TS 1451621760000000000) (> #V 95))");
-
-    //       for (EventLoop::DmaBuffer& buf : resultBuffers) {
-    //         DataPoint* points = ( DataPoint* ) buf.GetPtr();
-
-    //         // using namespace SeriesQuery;
-
-    //         // // memtableSize is the size of the buffer when seen as an array of DataPoint's
-    //         // for (std::size_t i = 0; i < memtableSize; ++i) {
-    //         //   if (mTestingHelper.ExecFilter(points[i].timestamp, points[i].value)) {
-    //         //     mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
-    //         //   }
-    //         // }
-    //         //
-    //         // AndExpr{
-    //         // LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
-    //         // GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}}
-
-    //         // Expr query;
-    //         // add(query, AndExpr{LtExpr{TimestampLiteral{}, UnsignedLiteralExpr{1451621760000000000}},
-    //         // GtExpr{ValueLiteral{}, SignedLiteralExpr{95}}});
-    //         // for (std::size_t i = 0; i < memtableSize; ++i) {
-    //         //   if (evaluate(query, points[i].timestamp, points[i].value)) {
-    //         //     mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
-    //         //   }
-    //         // }
-    //       }
-
-    //       mLogger->info("Query done");
-    //       // mQueryManager.ParseQuery("(and (< #TS 1451621760000000000) (> #V 95))");
-
-    //       std::erase(mRunningQueries, op);
-    //       mQueringDone = true;
-    //       mQueryLatency = mTestingHelper.Finalize();
-    //     }
-    //   }
-    // }
 
     // When done, print time it took
     // TODO, instead of waiting for the queue to be empty, check with mInputs if there is anythin
@@ -523,50 +302,6 @@ private:
   // std::unordered_map<std::string, std::uint64_t> mIndex;
   // std::uint64_t mIndexCounter{0};
 };
-
-// struct UdpServer: public Common::IUDPSocketHandler {
-// public:
-//   UdpServer(EventLoop::EventLoop& ev): socket(ev, this) {
-//     mLogger = ev.RegisterLogger("udp server");
-//   }
-
-//   void Configure() {
-//     socket.StartListening(nullptr, 8080);
-//   }
-
-//   void OnIncomingData([[maybe_unused]] char* data, [[maybe_unused]] size_t len) override {
-//     mLogger->info("Received udp frame: {}", std::string{data, len});
-//   }
-
-// private:
-//   Common::UDPSocket socket;
-//   std::shared_ptr<spdlog::logger> mLogger;
-// };
-
-// class client: public Common::IStreamSocketHandler {
-// public:
-//   client(EventLoop::EventLoop& ev): mEv(ev), mSocket(ev, this) {
-//     mLogger = mEv.RegisterLogger("TCPClient");
-//     mSocket.Connect("127.0.0.1", 8080);
-//   }
-
-//   void OnConnected() final {
-//     ::capnp::MallocMessageBuilder response;
-//     proto::IdRequest::Builder request = response.initRoot<proto::IdRequest>();
-//     // request.
-
-//     // mSocket.Send();
-//   }
-
-//   // void OnDisconnected([[maybe_unused]] Common::StreamSocket* conn) final {}
-
-//   void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, char* data, std::size_t len) final {}
-
-// private:
-//   EventLoop::EventLoop& mEv;
-//   Common::StreamSocket mSocket;
-//   std::shared_ptr<spdlog::logger> mLogger;
-// };
 
 int main() {
   EventLoop::EventLoop loop;
