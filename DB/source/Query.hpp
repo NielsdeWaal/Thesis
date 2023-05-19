@@ -227,7 +227,7 @@ namespace SeriesQuery {
 
   void add(Expr& curr, Expr newExpr) {
     struct visitor {
-      visitor(Expr& expression, Expr& parent): expression(expression), parent(parent) {}
+      visitor(Expr& childExpression, Expr& parentExpression): expression(childExpression), parent(parentExpression) {}
       void operator()([[maybe_unused]] const UnsignedLiteralExpr& expr) {
         assert(false);
       }

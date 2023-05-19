@@ -19,19 +19,6 @@ public:
     mQueries.resize(10);
   }
 
-  // void CreateQuery(const std::string& query) {
-  //   //  [\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)
-  //   // std::regex parser(R"[\s,]*(~@|[\[\]{}()'`~^@]|\"(\?:\\.|[\^\\\"])*\"?|;.*|[^\s\[\]{}('\"`,;)]*)");
-  //   std::regex parser("[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\\\.|[^\\\\\"])*\"?|;.*|[^\s\\[\\]{}('\"`,;)]*)");
-  //   std::vector<std::string> atoms(std::sregex_token_iterator(query.begin(), query.end(), parser, -1), {});
-  //   mLogger->info("Parsed query into: size: {}", atoms.size());
-  //   for (const auto& str : atoms) {
-  //     mLogger->warn("{}", str);
-  //   }
-  // }
-
-  // void Parse(std::string_view buf);
-
   void SubmitQuery(std::string_view expression) {
     SeriesQuery::Expr query;
     std::uint64_t startTS{0}; // TODO Switch to optional to make 0 a possible value
@@ -346,13 +333,13 @@ private:
         std::uint64_t start,
         std::uint64_t end,
         GroupByOp op,
-        std::uint64_t id)
+        std::uint64_t queryId)
     : IOBatch(ev, fd, addrs, blockSize)
     , QueryExpression(expression)
     , startTS(start)
     , endTS(end)
     , postProcessing(op)
-    , id(id) {}
+    , id(queryId) {}
     Query(): IOBatch(), QueryExpression(), id(0) {}
     QueryIO IOBatch;
     SeriesQuery::Expr QueryExpression;
@@ -457,8 +444,8 @@ private:
   std::deque<Query> mQueries;
 
   static constexpr std::size_t memtableSize = bufSize / sizeof(DataPoint);
-  MetaData& mMetadata;
   Writer<bufSize>& mWriter;
+  MetaData& mMetadata;
 
   std::uint64_t mQueryCounter{0};
 

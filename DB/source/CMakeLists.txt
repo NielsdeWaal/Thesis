@@ -13,6 +13,7 @@ capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS IngestionProtocol/proto.capnp)
 
 add_executable(FrogFish
   main.cpp
+  FrogFish.hpp
   FileManager.hpp
   InfluxParser.hpp
   lexyparser.hpp
