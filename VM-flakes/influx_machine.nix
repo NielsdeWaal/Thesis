@@ -11,7 +11,4 @@
     enable = true;
   };
 
-  environment.etc = {
-    tsbs.source = ./tsbs;
-  };
 }
