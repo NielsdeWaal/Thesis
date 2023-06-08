@@ -24,6 +24,13 @@
         ];
         format = "qcow";
       };
+      clickhouse_machine = nixos-generators.nixosGenerate {
+        system = "x86_64-linux";
+        modules = [
+          ./clickhouse_machine.nix
+        ];
+        format = "qcow";
+      };
       questdb_machine = nixos-generators.nixosGenerate {
         system = "x86_64-linux";
         modules = [

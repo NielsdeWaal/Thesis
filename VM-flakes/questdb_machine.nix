@@ -26,11 +26,18 @@ in
     tsbs.source = ./tsbs;
   };
 
-  environment.systemPackages = with pkgs;
-    [
-      jdk17
-    ];
-  environment.etc = {
-    questdb.source = ./questdb-7.1.3;
+  virtualisation.docker = {
+    enable = true;
+    enableOnBoot = true;
+  };
+  virtualisation.oci-containers = {
+    backend = "docker";
+    containers = {
+      questdb = {
+        image = "questdb/questdb:7.1.3";
+        ports = ["9000:9000" "9009:9009" "8812:8812" "9003:9003"];
+        volumes = ["/home/deploy/questdb:/var/lib/questdb"];
+      };
+    };
   };
 }

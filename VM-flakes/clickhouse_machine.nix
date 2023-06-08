@@ -7,7 +7,7 @@
 
   boot.kernelPackages = pkgs.linuxPackages_6_1;
 
-  services.influxdb = {
+  services.clickhouse = {
     enable = true;
   };
 
