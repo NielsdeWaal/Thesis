@@ -48,3 +48,7 @@ struct InsertionBatch {
 	
 	recordings @0 :List(Message);
 }
+
+struct InsertionResponse {
+	
+}
