@@ -50,10 +50,15 @@ public:
 
   [[nodiscard]] std::optional<std::uint64_t> GetIndex(const std::string& seriesName) {
     // if (!mIndex.contains(seriesName)) {
-    if (mIndex.find(seriesName) == mIndex.end()) {
-      return std::nullopt;
+    // if (mIndex.find(seriesName) == mIndex.end()) {
+    //   return std::nullopt;
+    // }
+    // return mIndex[seriesName];
+    if(const auto& index = mIndex.find(seriesName); index != mIndex.end()) {
+      return index->second;
     }
-    return mIndex[seriesName];
+
+    return std::nullopt;
   }
 
   std::uint64_t InsertSeries(const std::string& seriesName) {
