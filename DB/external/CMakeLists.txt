@@ -132,7 +132,8 @@ FetchContent_Declare(
   TimeTree
   
   GIT_REPOSITORY git@github.com:NielsdeWaal/TimeTree.git
-  GIT_TAG origin/master
+  # GIT_TAG origin/master
+  GIT_TAG e9048bcac4b483994d41515578544cfed1194c91
 )
 FetchContent_Declare(
     fmt
@@ -167,7 +168,20 @@ FetchContent_Declare(
     GIT_TAG v0.6.0
 )
 
-FetchContent_MakeAvailable(CommonLibs TimeTree fmt lexy tsl_hat_trie)
+FetchContent_Declare(
+    websocketpp
+    
+    GIT_REPOSITORY git@github.com:zaphoyd/websocketpp.git
+    GIT_TAG origin/develop
+)
+
+add_definitions(-DBoost_USE_STATIC_LIBS=ON)
+find_package(Boost REQUIRED COMPONENTS filesystem system thread regex)
+add_library(PMSWebsockets INTERFACE)
+target_include_directories(PMSWebsockets INTERFACE ${websocketpp_SOURCE_DIR})
+target_link_libraries(PMSWebsockets INTERFACE Boost::system Boost::thread Boost::regex)
+
+FetchContent_MakeAvailable(CommonLibs TimeTree fmt lexy tsl_hat_trie doctest websocketpp)
 # set_target_properties(EventLoop PROPERTIES IMPORTED_LOCATION k)
 # link_directories(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)
 # add_subdirectory(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)

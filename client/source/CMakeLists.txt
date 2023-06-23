@@ -27,7 +27,8 @@ target_link_libraries(FrogFishClient
   arrow
   capnp
   kj
-  )
+  PMSWebsockets   
+)
   # ${CAPNP_LIBRARIES})
 
 # add_dependencies(FrogFish

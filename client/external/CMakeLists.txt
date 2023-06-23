@@ -154,7 +154,20 @@ FetchContent_Declare(
     URL https://lexy.foonathan.net/download/lexy-src.zip
 )
 
-FetchContent_MakeAvailable(CommonLibs fmt lexy)
+FetchContent_Declare(
+    websocketpp
+    
+    GIT_REPOSITORY git@github.com:zaphoyd/websocketpp.git
+    GIT_TAG origin/develop
+)
+
+add_definitions(-DBoost_USE_STATIC_LIBS=ON)
+find_package(Boost REQUIRED COMPONENTS filesystem system thread regex)
+add_library(PMSWebsockets INTERFACE)
+target_include_directories(PMSWebsockets INTERFACE ${websocketpp_SOURCE_DIR})
+target_link_libraries(PMSWebsockets INTERFACE Boost::system Boost::thread Boost::regex)
+
+FetchContent_MakeAvailable(CommonLibs fmt lexy websocketpp)
 # set_target_properties(EventLoop PROPERTIES IMPORTED_LOCATION k)
 # link_directories(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)
 # add_subdirectory(${CMAKE_BINARY_DIR}/external/CommonLibs-prefix/src/CommonLibs)
