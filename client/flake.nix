@@ -48,6 +48,7 @@
         # FrogFish dependencies
         arrow-cpp
         capnproto
+        boost
 
         # CommonLibs requirements
         spdlog

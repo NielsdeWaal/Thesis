@@ -55,12 +55,14 @@
         openssl.dev
         liburing
         cpptoml
+        boost
 
         # TimeTree requirements
         doctest
         fmt_9
         tl-expected
         perf-tools
+        valgrind
       ];
 
       # Setting up the environment variables you need during
