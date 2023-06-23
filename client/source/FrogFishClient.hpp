@@ -4,6 +4,7 @@
 #include "EventLoop.h"
 #include "ManagementPort.hpp"
 #include "UDPSocket.h"
+#include "WebSocket.hpp"
 
 #include <capnp/serialize.h>
 #include <chrono>
@@ -15,9 +16,12 @@
 
 class FrogFishClient
 : public EventLoop::IEventLoopCallbackHandler
-, public Common::IUDPSocketHandler {
+// , public Common::IStreamSocketHandler 
+, public FrogFish::IWebSocketHandler
+{
 public:
-  FrogFishClient(EventLoop::EventLoop& ev): mEv(ev), mManagementPort(mEv), mDataPort(ev, this) {
+  FrogFishClient(EventLoop::EventLoop& ev): mEv(ev), mManagementPort(mEv), /*mDataPort(ev, this) ,*/
+  mWebSocket(ev, this) {
     mLogger = mEv.RegisterLogger("FrogFishClient");
     mEv.RegisterCallbackHandler(this, EventLoop::EventLoop::LatencyType::Low);
   }
@@ -93,9 +97,15 @@ public:
       }
       mCapWrapper->words = kj::arrayPtr(const_cast<capnp::word*>(message.getEnd()), mCapWrapper->words.end());
     }
-    if (mManagementPort.RequestsDone() && (!mDataBatches.empty() || !mTaggedDataBatches.empty())) {
+    if(mManagementPort.RequestsDone() && !mConnected && !mConnectionInProg) {
+      // mDataPort.Connect("127.0.0.1", 1337);
+      mWebSocket.Configure("ws://127.0.0.1", 1337);
+      mConnectionInProg = true;
+      return;
+    }
+    if (mManagementPort.RequestsDone() && (!mDataBatches.empty() || !mTaggedDataBatches.empty()) && !mWaiting && mConnected) {
       // mLogger->info("Got all tag ids");
-      // mWaiting = false;
+      mWaiting = false;
 
       if (!mDataBatches.empty()) {
         mLogger->info("Sending {} tags", mDataBatches.size());
@@ -138,7 +148,9 @@ public:
           auto size = encodedArrayPtr.size();
 
           // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
-          mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
+          // mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
+          // mDataPort.Send(encodedCharArray, size);
+          mWebSocket.Send(encodedCharArray, size);
         }
 
         // auto encodedArray = capnp::messageToFlatArray(ingestMessage);
@@ -177,7 +189,10 @@ public:
           auto size = encodedArrayPtr.size();
 
           // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
-          mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
+          // mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
+          // mDataPort.Send(encodedCharArray, size);
+          mWebSocket.Send(encodedCharArray, size);
+          mWaiting = true;
         }
 
         mTaggedDataBatches.clear();
@@ -195,7 +210,16 @@ public:
     }
   }
 
-  void OnIncomingData([[maybe_unused]] char* data, [[maybe_unused]] std::size_t len) final {}
+  void OnConnected() final {mLogger->info("Connected to server"); mConnected = true;}
+	// void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
+	void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
+
+  // void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, [[maybe_unused]] char* data, [[maybe_unused]] std::size_t len) final {
+  void OnIncomingData([[maybe_unused]] websocketpp::connection_hdl conn, [[maybe_unused]] FrogFish::ClientSocket::message_ptr msg) final {
+    // TODO verify data confirmation
+    mLogger->info("Go completion from DB");
+    mWaiting = false;
+  }
 
 private:
   struct CapnpWrapper {
@@ -217,9 +241,13 @@ private:
 
   EventLoop::EventLoop& mEv;
   ManagementPort mManagementPort;
-  Common::UDPSocket mDataPort;
+  // Common::StreamSocket mDataPort;
+
+  FrogFish::WebSocket mWebSocket;
 
   bool mWaiting{false};
+  bool mConnectionInProg{false};
+  bool mConnected{false};
   std::unordered_map<std::string, std::vector<std::pair<std::uint64_t, std::int64_t>>> mDataBatches;
   std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint64_t, std::int64_t>>> mTaggedDataBatches;
 
