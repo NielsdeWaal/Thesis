@@ -3,6 +3,7 @@
 
 #include "EventLoop.h"
 #include "ManagementPort.hpp"
+#include "TSC.h"
 #include "UDPSocket.h"
 #include "WebSocket.hpp"
 
@@ -16,14 +17,69 @@
 
 class FrogFishClient
 : public EventLoop::IEventLoopCallbackHandler
-// , public Common::IStreamSocketHandler 
-, public FrogFish::IWebSocketHandler
-{
+// , public Common::IStreamSocketHandler
+, public FrogFish::IWebSocketHandler {
 public:
-  FrogFishClient(EventLoop::EventLoop& ev): mEv(ev), mManagementPort(mEv), /*mDataPort(ev, this) ,*/
-  mWebSocket(ev, this) {
+  FrogFishClient(EventLoop::EventLoop& ev)
+  : mEv(ev)
+  , mManagementPort(mEv)
+  /*, mDataPort(ev, this) ,*/
+  , mWebSocket(ev, this) {
     mLogger = mEv.RegisterLogger("FrogFishClient");
     mEv.RegisterCallbackHandler(this, EventLoop::EventLoop::LatencyType::Low);
+
+    using namespace Common::literals;
+    mPrintTimer = EventLoop::EventLoop::Timer(5_s, EventLoop::EventLoop::TimerType::Repeating, [&] {
+      // std::uint64_t ingestCount = 10000;
+      // auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - mSendTS);
+      // std::vector<std::uint64_t> durations;
+      // durations.resize(mStats.size());
+      // std::transform(mStats.begin(), mStats.end(), durations.begin(), [&](Stats stat) {
+      //   return Common::MONOTONIC_CLOCK::ToNanos(stat.mConfirmTS - stat.mSendSize);
+      // });
+
+      // double rate = std::inner_product(
+      //     mStats.begin(),
+      //     mStats.end(),
+      //     durations.begin(),
+      //     0,
+      //     std::plus<>(),
+      //     [](Stats stat, std::uint64_t duration) {
+      //       double time = duration / 1000000000.;
+      //       double rate = stat.mSendCount / time;
+      //       return rate;
+      //     });
+      // double avgRate = rate / durations.size();
+
+      // // double timeTakenS = duration / 1000000000.;
+      // // double rateS = mSendCount / timeTakenS;
+      // double dataRate = (avgRate * 128) / 1000000;
+      // mLogger->info("Avg: {}MB/s / {} points/sec", dataRate, avgRate);
+      // mLogger->info(
+      //     "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
+      //     mSendCount,
+      //     mSendSize,
+      //     timeTakenS,
+      //     dataRate,
+      //     rateS);
+      // mSendTS = Common::MONOTONIC_CLOCK::Now();
+      // mSendSize = 0;
+      // mSendCount = 0;
+      for(const auto& stat : mStats) {
+        auto duration = Common::MONOTONIC_CLOCK::ToNanos(stat.mConfirmTS - stat.mSendTS);
+        double timeTakenS = duration / 1000000000.;
+        double rateS = stat.mSendCount / timeTakenS;
+        double dataRate = (rateS * 128) / 1000000;
+        mLogger->info(
+            "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
+            stat.mSendCount,
+            stat.mSendSize,
+            timeTakenS,
+            dataRate,
+            rateS);
+        }
+      // mStats.clear();
+    });
   }
 
   void Configure() {
@@ -62,6 +118,18 @@ public:
       using namespace std::chrono_literals;
       if (batch.size() == 0) {
         mLogger->info("Ingestion done");
+
+        std::ofstream output("res.csv");
+        // fmt::format_to(output, "nr. points,bytes,time taken,mbs,ps");
+        output << "nr. points,bytes,time taken,mbs,ps\n";
+        for(const Stats& stat : mStats) {
+          auto duration = Common::MONOTONIC_CLOCK::ToNanos(stat.mConfirmTS - stat.mSendTS);
+          double timeTakenS = duration / 1000000000.;
+          double rateS = stat.mSendCount / timeTakenS;
+          double dataRate = (rateS * 128) / 1000000;
+          output << fmt::format("{},{},{},{},{}\n", stat.mSendCount, stat.mSendSize, timeTakenS, dataRate, rateS);
+        }
+
         exit(0);
         return;
       }
@@ -97,13 +165,14 @@ public:
       }
       mCapWrapper->words = kj::arrayPtr(const_cast<capnp::word*>(message.getEnd()), mCapWrapper->words.end());
     }
-    if(mManagementPort.RequestsDone() && !mConnected && !mConnectionInProg) {
+    if (mManagementPort.RequestsDone() && !mConnected && !mConnectionInProg) {
       // mDataPort.Connect("127.0.0.1", 1337);
       mWebSocket.Configure("ws://127.0.0.1", 1337);
       mConnectionInProg = true;
       return;
     }
-    if (mManagementPort.RequestsDone() && (!mDataBatches.empty() || !mTaggedDataBatches.empty()) && !mWaiting && mConnected) {
+    if (mManagementPort.RequestsDone() && (!mDataBatches.empty() || !mTaggedDataBatches.empty()) && !mWaiting
+        && mConnected) {
       // mLogger->info("Got all tag ids");
       mWaiting = false;
 
@@ -163,37 +232,55 @@ public:
         mDataBatches.clear();
         return;
       } else {
-        // mLogger->info("Data batch TODO");
-        for (auto [k, v] : mTaggedDataBatches) {
-          ::capnp::MallocMessageBuilder ingestMessage;
-          proto::InsertionBatch::Builder batch = ingestMessage.initRoot<proto::InsertionBatch>();
-          ::capnp::List<proto::InsertionBatch::Message>::Builder messages = batch.initRecordings(1);
+        // mLogger->info("databatches size: {}", mTaggedDataBatches.size());
+
+        // mStats.push_back({});
+
+        ::capnp::MallocMessageBuilder ingestMessage;
+        proto::InsertionBatch::Builder batch = ingestMessage.initRoot<proto::InsertionBatch>();
+        ::capnp::List<proto::InsertionBatch::Message>::Builder messages =
+            batch.initRecordings(mTaggedDataBatches.size());
+
+        // for (auto [tag, values] : mTaggedDataBatches) {
+        for (std::pair<
+                 std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint64_t, std::int64_t>>>::iterator,
+                 ::capnp::List<proto::InsertionBatch::Message>::Builder::Iterator>
+                 msgs(mTaggedDataBatches.begin(), messages.begin());
+             msgs.first != mTaggedDataBatches.end();
+             ++msgs.first, ++msgs.second) {
           // ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder
           //     measurements = i.second->initMeasurements(i.first->second.size());
           ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder measurements =
-              messages[0].initMeasurements(v.size());
-          messages[0].setTag(k);
+              msgs.second->initMeasurements(msgs.first->second.size());
+          msgs.second->setTag(msgs.first->first);
 
           for (std::pair<
                    std::vector<std::pair<std::uint64_t, std::int64_t>>::iterator,
                    ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder::Iterator>
-                   j(v.begin(), measurements.begin());
-               j.first != v.end();
+                   j(msgs.first->second.begin(), measurements.begin());
+               j.first != msgs.first->second.end();
                ++j.first, ++j.second) {
             j.second->setTimestamp(j.first->first);
             j.second->setValue(j.first->second);
           }
-          auto encodedArray = capnp::messageToFlatArray(ingestMessage);
-          auto encodedArrayPtr = encodedArray.asChars();
-          auto encodedCharArray = encodedArrayPtr.begin();
-          auto size = encodedArrayPtr.size();
-
-          // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
-          // mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
-          // mDataPort.Send(encodedCharArray, size);
-          mWebSocket.Send(encodedCharArray, size);
-          mWaiting = true;
         }
+        auto encodedArray = capnp::messageToFlatArray(ingestMessage);
+        auto encodedArrayPtr = encodedArray.asChars();
+        auto encodedCharArray = encodedArrayPtr.begin();
+        auto size = encodedArrayPtr.size();
+
+        // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
+        // mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
+        // mDataPort.Send(encodedCharArray, size);
+        mWebSocket.Send(encodedCharArray, size);
+        // mSendTS = Common::MONOTONIC_CLOCK::Now();
+        // mSendSize += size;
+        // mSendCount += 10000;
+        // mStats.back().mSendTS = Common::MONOTONIC_CLOCK::Now();
+        // mStats.back().mSendCount += 10000;
+        // mStats.back().mSendSize += size;
+        mStats.push_back({.mSendTS = Common::MONOTONIC_CLOCK::Now(), .mSendCount = 10000, .mSendSize = size});
+        mWaiting = true;
 
         mTaggedDataBatches.clear();
         return;
@@ -210,15 +297,24 @@ public:
     }
   }
 
-  void OnConnected() final {mLogger->info("Connected to server"); mConnected = true;}
-	// void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
-	void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
+  void OnConnected() final {
+    mLogger->info("Connected to server");
+    mConnected = true;
+    mEv.AddTimer(&mPrintTimer);
+    // mSendTS = Common::MONOTONIC_CLOCK::Now();
+  }
+  // void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
+  void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
 
-  // void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, [[maybe_unused]] char* data, [[maybe_unused]] std::size_t len) final {
-  void OnIncomingData([[maybe_unused]] websocketpp::connection_hdl conn, [[maybe_unused]] FrogFish::ClientSocket::message_ptr msg) final {
+  // void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, [[maybe_unused]] char* data, [[maybe_unused]]
+  // std::size_t len) final {
+  void OnIncomingData(
+      [[maybe_unused]] websocketpp::connection_hdl conn,
+      [[maybe_unused]] FrogFish::ClientSocket::message_ptr msg) final {
     // TODO verify data confirmation
-    mLogger->info("Go completion from DB");
+    // mLogger->info("Go completion from DB");
     mWaiting = false;
+    mStats.back().mConfirmTS = Common::MONOTONIC_CLOCK::Now();
   }
 
 private:
@@ -250,6 +346,20 @@ private:
   bool mConnected{false};
   std::unordered_map<std::string, std::vector<std::pair<std::uint64_t, std::int64_t>>> mDataBatches;
   std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint64_t, std::int64_t>>> mTaggedDataBatches;
+
+  // Common::MONOTONIC_TIME mSendTS{0};
+  // std::size_t mSendSize{0};
+  // std::size_t mSendCount{0};
+
+  struct Stats {
+    Common::MONOTONIC_TIME mSendTS{0};
+    std::size_t mSendCount{0};
+    std::size_t mSendSize{0};
+    Common::MONOTONIC_TIME mConfirmTS{0};
+  };
+  std::vector<Stats> mStats;
+
+  EventLoop::EventLoop::Timer mPrintTimer;
 
   // capnp related parameters
   std::unique_ptr<CapnpWrapper> mCapWrapper;
