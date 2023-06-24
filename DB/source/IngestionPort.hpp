@@ -41,9 +41,10 @@ public:
   // void OnIncomingData(Common::StreamSocket* conn, char* data, size_t len) override {
   void OnIncomingData([[maybe_unused]] websocketpp::connection_hdl conn, FrogFish::ServerSocket::message_ptr data) final {
     // mLogger->info("Received udp frame: {}", std::string{data, len});
-    auto buf = std::aligned_alloc(512, data->get_payload().size());
-    std::memcpy(buf, data->get_payload().data(), data->get_payload().size());
-    auto pdata = kj::arrayPtr(( const capnp::word* ) buf, data->get_payload().size() / sizeof(capnp::word));
+
+    // auto buf = std::aligned_alloc(512, data->get_payload().size());
+    // std::memcpy(buf, data->get_payload().data(), data->get_payload().size());
+    auto pdata = kj::arrayPtr(( const capnp::word* ) data->get_payload().data(), data->get_payload().size() / sizeof(capnp::word));
     capnp::FlatArrayMessageReader msg{pdata};
     proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
 
@@ -58,17 +59,17 @@ public:
         ++ingestCount;
       }
     }
-    auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
-    double timeTakenS = duration / 1000000000.;
-    double rateS = ingestCount / timeTakenS;
-    double dataRate = (rateS * 128) / 1000000;
-    mLogger->info(
-        "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
-        ingestCount,
-        data->get_payload().size(),
-        timeTakenS,
-        dataRate,
-        rateS);
+    // auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
+    // double timeTakenS = duration / 1000000000.;
+    // double rateS = ingestCount / timeTakenS;
+    // double dataRate = (rateS * 128) / 1000000;
+    // mLogger->info(
+    //     "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
+    //     ingestCount,
+    //     data->get_payload().size(),
+    //     timeTakenS,
+    //     dataRate,
+    //     rateS);
 
     ::capnp::MallocMessageBuilder response;
     proto::InsertionResponse::Builder resp = response.initRoot<proto::InsertionResponse>();
