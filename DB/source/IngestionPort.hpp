@@ -20,12 +20,15 @@ class IngestionPort
 public:
   IngestionPort(EventLoop::EventLoop& ev, Writer<bufSize>& writer): /*mSocket(ev, this),*/ mWriter(writer), mWebSocket(ev, this) {
     mLogger = ev.RegisterLogger("IngestionPort");
+    auto config = ev.GetConfigTable("DB");
+    mNoop = config->get_as<bool>("Noop").value_or(false);
   }
 
   void Configure(std::uint16_t port) {
     // mSocket.StartListening(nullptr, port);
     // mSocket.BindAndListen(port);
     mWebSocket.Configure(port);
+    mLogger->info("Configured: port: {}, noop mode: {}", port, mNoop);
   }
 
   void OnConnected() final {}
@@ -44,19 +47,21 @@ public:
 
     // auto buf = std::aligned_alloc(512, data->get_payload().size());
     // std::memcpy(buf, data->get_payload().data(), data->get_payload().size());
-    auto pdata = kj::arrayPtr(( const capnp::word* ) data->get_payload().data(), data->get_payload().size() / sizeof(capnp::word));
-    capnp::FlatArrayMessageReader msg{pdata};
-    proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
+    if(!mNoop){
+      auto pdata = kj::arrayPtr(( const capnp::word* ) data->get_payload().data(), data->get_payload().size() / sizeof(capnp::word));
+      capnp::FlatArrayMessageReader msg{pdata};
+      proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
 
-    std::uint64_t ingestCount{0};
-    Common::MONOTONIC_TIME start{Common::MONOTONIC_CLOCK::Now()};
-    // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
-    // auto msgs = insertMsg.getRecordings();
-    for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
-      // mLogger->info("Received insert for tag: {}", batch.getTag());
-      for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
-        mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
-        ++ingestCount;
+      std::uint64_t ingestCount{0};
+      Common::MONOTONIC_TIME start{Common::MONOTONIC_CLOCK::Now()};
+      // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
+      // auto msgs = insertMsg.getRecordings();
+      for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
+        // mLogger->info("Received insert for tag: {}", batch.getTag());
+        for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
+          mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
+          ++ingestCount;
+        }
       }
     }
     // auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
@@ -89,6 +94,8 @@ private:
   Writer<bufSize>& mWriter;
 
   FrogFish::WebSocket mWebSocket;
+
+  bool mNoop{false};
 
   std::shared_ptr<spdlog::logger> mLogger;
 };
