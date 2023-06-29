@@ -29,7 +29,7 @@ public:
     mEv.RegisterCallbackHandler(this, EventLoop::EventLoop::LatencyType::Low);
 
     using namespace Common::literals;
-    mPrintTimer = EventLoop::EventLoop::Timer(5_s, EventLoop::EventLoop::TimerType::Repeating, [&] {
+    mPrintTimer = EventLoop::EventLoop::Timer(1_s, EventLoop::EventLoop::TimerType::Repeating, [&] {
       // std::uint64_t ingestCount = 10000;
       // auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - mSendTS);
       // std::vector<std::uint64_t> durations;
@@ -65,21 +65,35 @@ public:
       // mSendTS = Common::MONOTONIC_CLOCK::Now();
       // mSendSize = 0;
       // mSendCount = 0;
-      for(const auto& stat : mStats) {
-        auto duration = Common::MONOTONIC_CLOCK::ToNanos(stat.mConfirmTS - stat.mSendTS);
-        double timeTakenS = duration / 1000000000.;
-        double rateS = stat.mSendCount / timeTakenS;
-        double dataRate = (rateS * 128) / 1000000;
-        mLogger->info(
-            "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
-            stat.mSendCount,
-            stat.mSendSize,
-            timeTakenS,
-            dataRate,
-            rateS);
-        }
-      // mStats.clear();
+    //   for(const auto& stat : mStats) {
+    //     auto duration = Common::MONOTONIC_CLOCK::ToNanos(stat.mConfirmTS - stat.mSendTS);
+    //     double timeTakenS = duration / 1000000000.;
+    //     double rateS = stat.mSendCount / timeTakenS;
+    //     double dataRate = (rateS * 16) / 1000000;
+    //     mLogger->info(
+    //         "{}: Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
+    //         stat.mRuntime,
+    //         stat.mSendCount,
+    //         stat.mSendSize,
+    //         timeTakenS,
+    //         dataRate,
+    //         rateS);
+    //     }
+    //   // mStats.clear();
+      // std::size_t count = mSendCount - mPrevCount;
+      std::size_t count = mSendCount;
+      // Common::MONOTONIC_TIME sinceStart = Common::MONOTONIC_CLOCK::Now() - mStartTS;
+      Common::MONOTONIC_TIME took = Common::MONOTONIC_CLOCK::Now() - mLastTS;
+      double rate = count / (Common::MONOTONIC_CLOCK::ToNanos(took) / 1000000000.);
+
+      mLogger->info("took: {}, count: {}, rate: {}", Common::MONOTONIC_CLOCK::ToNanos(took), count, rate);
+      mStats.emplace_back(Common::MONOTONIC_CLOCK::ToNanos(took), count, rate);
+
+      mLastTS = Common::MONOTONIC_CLOCK::Now();
+      mPrevCount = count;
+      mSendCount = 0;
     });
+
   }
 
   void Configure() {
@@ -120,15 +134,21 @@ public:
         mLogger->info("Ingestion done");
 
         std::ofstream output("res.csv");
-        // fmt::format_to(output, "nr. points,bytes,time taken,mbs,ps");
-        output << "nr. points,bytes,time taken,mbs,ps\n";
-        for(const Stats& stat : mStats) {
-          auto duration = Common::MONOTONIC_CLOCK::ToNanos(stat.mConfirmTS - stat.mSendTS);
-          double timeTakenS = duration / 1000000000.;
-          double rateS = stat.mSendCount / timeTakenS;
-          double dataRate = (rateS * 128) / 1000000;
-          output << fmt::format("{},{},{},{},{}\n", stat.mSendCount, stat.mSendSize, timeTakenS, dataRate, rateS);
+        output << "time period,count period,rate period\n";
+        for (const auto& tup : mStats) {
+          mLogger->info("res: {},{},{}", std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
+          output << fmt::format("{},{},{}\n", std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
         }
+        // // fmt::format_to(output, "nr. points,bytes,time taken,mbs,ps");
+        // output << "runtime,nr. points,bytes,time taken,mbs,ps\n";
+        // for(const Stats& stat : mStats) {
+        //   auto duration = Common::MONOTONIC_CLOCK::ToNanos(stat.mConfirmTS - stat.mSendTS);
+        //   double timeTakenS = duration / 1000000000.;
+        //   double rateS = stat.mSendCount / timeTakenS;
+        //   double dataRate = (rateS * 16) / 1000000;
+        //   output << fmt::format("{},{},{},{},{},{}\n", stat.mRuntime, stat.mSendCount, stat.mSendSize, timeTakenS, dataRate, rateS);
+        // }
+        output.flush();
 
         exit(0);
         return;
@@ -275,12 +295,12 @@ public:
         mWebSocket.Send(encodedCharArray, size);
         // mSendTS = Common::MONOTONIC_CLOCK::Now();
         // mSendSize += size;
-        // mSendCount += 10000;
+        mSendCount += 10000;
         // mStats.back().mSendTS = Common::MONOTONIC_CLOCK::Now();
         // mStats.back().mSendCount += 10000;
         // mStats.back().mSendSize += size;
-        mStats.push_back({.mSendTS = Common::MONOTONIC_CLOCK::Now(), .mSendCount = 10000, .mSendSize = size});
-        mWaiting = true;
+        // mStats.push_back({.mSendTS = Common::MONOTONIC_CLOCK::Now(), .mSendCount = 10000, .mSendSize = size, .mRuntime = Common::MONOTONIC_CLOCK::Now() - mStartTS});
+        // mWaiting = true;
 
         mTaggedDataBatches.clear();
         return;
@@ -314,7 +334,7 @@ public:
     // TODO verify data confirmation
     // mLogger->info("Go completion from DB");
     mWaiting = false;
-    mStats.back().mConfirmTS = Common::MONOTONIC_CLOCK::Now();
+    // mStats.back().mConfirmTS = Common::MONOTONIC_CLOCK::Now();
   }
 
 private:
@@ -351,13 +371,20 @@ private:
   // std::size_t mSendSize{0};
   // std::size_t mSendCount{0};
 
-  struct Stats {
-    Common::MONOTONIC_TIME mSendTS{0};
-    std::size_t mSendCount{0};
-    std::size_t mSendSize{0};
-    Common::MONOTONIC_TIME mConfirmTS{0};
-  };
-  std::vector<Stats> mStats;
+  // struct Stats {
+  //   Common::MONOTONIC_TIME mSendTS{0};
+  //   std::size_t mSendCount{0};
+  //   std::size_t mSendSize{0};
+  //   Common::MONOTONIC_TIME mRuntime{0};
+  //   Common::MONOTONIC_TIME mConfirmTS{0};
+  // };
+  // std::vector<Stats> mStats;
+  std::size_t mPrevCount{0};
+  std::size_t mSendCount{0};
+
+  Common::MONOTONIC_TIME mStartTS{Common::MONOTONIC_CLOCK::Now()};
+  Common::MONOTONIC_TIME mLastTS{Common::MONOTONIC_CLOCK::Now()};
+  std::vector<std::tuple<std::uint64_t,std::uint64_t,double>> mStats;
 
   EventLoop::EventLoop::Timer mPrintTimer;
 
