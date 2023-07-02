@@ -82,7 +82,7 @@ public:
         mReceiving = true;
         mDataRemaining = header.totalSize - len;
       } else if (overflow < 0) {
-        // recurse
+        // More than one message in the buffer, recurse to process possible new message
         ProcessMessage();
         OnIncomingData(conn, data + header.totalSize, len - header.totalSize);
       } else if (overflow == 0) {
@@ -102,7 +102,7 @@ public:
       mLogger->debug("Bytes remaining: {}, overflow: {}", mDataRemaining, overflow);
 
       if (mDataRemaining == 0) {
-        mLogger->debug("Received full message, parsing...");
+        mLogger->trace("Received full message, parsing...");
 
         ProcessMessage();
         // SendResponse(conn);
@@ -126,7 +126,7 @@ private:
     // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
     // auto msgs = insertMsg.getRecordings();
     for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
-      // mLogger->info("Received insert for tag: {}", batch.getTag());
+      mLogger->trace("Received insert for tag: {}", batch.getTag());
       for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
         mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
         ++ingestCount;
