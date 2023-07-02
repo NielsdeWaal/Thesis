@@ -10,92 +10,189 @@
 
 #include <capnp/common.h>
 #include <capnp/serialize.h>
+#include <kj/common.h>
+#include <numeric>
 
 template<std::size_t bufSize>
 class IngestionPort
-// : public Common::IStreamSocketServerHandler
-// , public Common::IStreamSocketHandler
-: public FrogFish::IWebSocketServerHandler
-, public FrogFish::IWebSocketHandler {
+: public Common::IStreamSocketServerHandler
+, public Common::IStreamSocketHandler
+// : public FrogFish::IWebSocketServerHandler
+// , public FrogFish::IWebSocketHandler
+{
 public:
-  IngestionPort(EventLoop::EventLoop& ev, Writer<bufSize>& writer): /*mSocket(ev, this),*/ mWriter(writer), mWebSocket(ev, this) {
+  IngestionPort(EventLoop::EventLoop& ev, Writer<bufSize>& writer)
+  : mSocket(ev, this)
+  , mWriter(writer) /*, mWebSocket(ev, this)*/ {
     mLogger = ev.RegisterLogger("IngestionPort");
+    mLogger->set_level(spdlog::level::info);
     auto config = ev.GetConfigTable("DB");
     mNoop = config->get_as<bool>("Noop").value_or(false);
   }
 
   void Configure(std::uint16_t port) {
     // mSocket.StartListening(nullptr, port);
-    // mSocket.BindAndListen(port);
-    mWebSocket.Configure(port);
+    mSocket.BindAndListen(port);
+    // mWebSocket.Configure(port);
     mLogger->info("Configured: port: {}, noop mode: {}", port, mNoop);
   }
 
   void OnConnected() final {}
-  // void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
-  void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
+  void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
+  // void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
 
-  // Common::IStreamSocketHandler* OnIncomingConnection() {
-  FrogFish::IWebSocketHandler* OnIncomingConnection() {
+  Common::IStreamSocketHandler* OnIncomingConnection() {
+    // FrogFish::IWebSocketHandler* OnIncomingConnection() {
     mLogger->info("New incoming client");
-    return static_cast<FrogFish::IWebSocketHandler*>(this);
+    // return static_cast<FrogFish::IWebSocketHandler*>(this);
+    return static_cast<Common::IStreamSocketHandler*>(this);
   }
 
-  // void OnIncomingData(Common::StreamSocket* conn, char* data, size_t len) override {
-  void OnIncomingData([[maybe_unused]] websocketpp::connection_hdl conn, FrogFish::ServerSocket::message_ptr data) final {
-    // mLogger->info("Received udp frame: {}", std::string{data, len});
+  void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, char* data, size_t len) override {
+    mLogger->trace("Received message of size: {}", len);
+    // auto res = capnp::expectedSizeInWordsFromPrefix(kj::arrayPtr(( const capnp::word* ) data, len /
+    // sizeof(capnp::word))); mLogger->info("expected size: {}", res * sizeof(capnp::word));
 
-    // auto buf = std::aligned_alloc(512, data->get_payload().size());
-    // std::memcpy(buf, data->get_payload().data(), data->get_payload().size());
-    if(!mNoop){
-      auto pdata = kj::arrayPtr(( const capnp::word* ) data->get_payload().data(), data->get_payload().size() / sizeof(capnp::word));
-      capnp::FlatArrayMessageReader msg{pdata};
-      proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
+    if (!mReceiving) {
+      capnpHeader header = ProcessSegmentTable(data, len);
+      auto overflow = header.totalSize <=> len;
+      mLogger->debug(
+          "nr segments: {}, segSize: {}, total: {}, size: {}, offset: {}, underflow: {}, overflow: {}, exact: {}",
+          header.nrSegments,
+          header.firstSegmentSize,
+          header.totalSize,
+          fmt::join(header.sizes, ", "),
+          header.offset,
+          overflow > 0,
+          overflow < 0,
+          overflow == 0);
 
-      std::uint64_t ingestCount{0};
-      Common::MONOTONIC_TIME start{Common::MONOTONIC_CLOCK::Now()};
-      // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
-      // auto msgs = insertMsg.getRecordings();
-      for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
-        // mLogger->info("Received insert for tag: {}", batch.getTag());
-        for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
-          mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
-          ++ingestCount;
-        }
+      if (mMessageBuffer.capacity() < header.totalSize) {
+        mMessageBuffer.reserve(header.totalSize);
+      }
+
+      // std::memcpy(mMessageBuffer.data(), data, len);
+      std::size_t dataLen = std::min(len, header.totalSize);
+      for (std::size_t i = 0; i < dataLen; ++i) {
+        mMessageBuffer.emplace_back(data[i]);
+      }
+
+      if (overflow > 0) {
+        mBufferOffset = len;
+        mReceiving = true;
+        mDataRemaining = header.totalSize - len;
+      } else if (overflow < 0) {
+        // recurse
+        ProcessMessage();
+        OnIncomingData(conn, data + header.totalSize, len - header.totalSize);
+      } else if (overflow == 0) {
+        ProcessMessage();
+      }
+    } else if (mDataRemaining > 0) {
+      // std::memcpy(mMessageBuffer.data() + mBufferOffset, data, len);
+      std::size_t dataLen = std::min(len, mDataRemaining);
+      for (std::size_t i = 0; i < dataLen; ++i) {
+        mMessageBuffer.emplace_back(data[i]);
+      }
+
+      bool overflow = mDataRemaining < len;
+
+      mDataRemaining -= dataLen;
+      mBufferOffset += dataLen;
+      mLogger->debug("Bytes remaining: {}, overflow: {}", mDataRemaining, overflow);
+
+      if (mDataRemaining == 0) {
+        mLogger->debug("Received full message, parsing...");
+
+        ProcessMessage();
+        // SendResponse(conn);
+
+        mMessageBuffer.clear();
+        mReceiving = false;
       }
     }
-    // auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
-    // double timeTakenS = duration / 1000000000.;
-    // double rateS = ingestCount / timeTakenS;
-    // double dataRate = (rateS * 128) / 1000000;
-    // mLogger->info(
-    //     "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
-    //     ingestCount,
-    //     data->get_payload().size(),
-    //     timeTakenS,
-    //     dataRate,
-    //     rateS);
-
-    ::capnp::MallocMessageBuilder response;
-    proto::InsertionResponse::Builder resp = response.initRoot<proto::InsertionResponse>();
-
-    auto encodedArray = capnp::messageToFlatArray(response);
-    auto encodedArrayPtr = encodedArray.asChars();
-    auto encodedCharArray = encodedArrayPtr.begin();
-    auto size = encodedArrayPtr.size();
-
-    // conn->Send(encodedCharArray, size);
-    mWebSocket.Send(conn, encodedCharArray, size);
   }
 
 private:
+  struct capnpHeader;
+
+  void ProcessMessage() {
+    auto pdata =
+        kj::arrayPtr(( const capnp::word* ) mMessageBuffer.data(), mMessageBuffer.size() / sizeof(capnp::word));
+    capnp::FlatArrayMessageReader msg{pdata};
+    proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
+    std::uint64_t ingestCount{0};
+    Common::MONOTONIC_TIME start{Common::MONOTONIC_CLOCK::Now()};
+    // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
+    // auto msgs = insertMsg.getRecordings();
+    for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
+      // mLogger->info("Received insert for tag: {}", batch.getTag());
+      for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
+        mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
+        ++ingestCount;
+      }
+    }
+    auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
+    double timeTakenS = duration / 1000000000.;
+    double rateS = ingestCount / timeTakenS;
+    double dataRate = (rateS * 128) / 1000000;
+    mLogger->info(
+        "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
+        ingestCount,
+        mMessageBuffer.size(),
+        timeTakenS,
+        dataRate,
+        rateS);
+  }
+
+  void SendResponse(Common::StreamSocket* conn) {
+      ::capnp::MallocMessageBuilder response;
+      proto::InsertionResponse::Builder resp = response.initRoot<proto::InsertionResponse>();
+
+      auto encodedArray = capnp::messageToFlatArray(response);
+      auto encodedArrayPtr = encodedArray.asChars();
+      auto encodedCharArray = encodedArrayPtr.begin();
+      auto size = encodedArrayPtr.size();
+
+      conn->Send(encodedCharArray, size);
+  }
+
+  capnpHeader ProcessSegmentTable(char* data, std::size_t len) {
+    capnpHeader header;
+    const std::uint32_t* table = reinterpret_cast<const std::uint32_t*>(data);
+
+    header.nrSegments = table[0] + 1;
+    header.offset = (header.nrSegments / 2u + 1u) * sizeof(capnp::word);
+    header.firstSegmentSize = table[1] * sizeof(capnp::word);
+
+    for (std::uint32_t i = 1; i < header.nrSegments; ++i) {
+      header.sizes.emplace_back(table[i + 1] * sizeof(capnp::word));
+    }
+    header.totalSize = std::accumulate(header.sizes.begin(), header.sizes.end(), 0) + header.firstSegmentSize + header.offset;
+
+    return header;
+  }
+
+private:
+  struct capnpHeader {
+    std::size_t totalSize;
+    std::vector<uint32_t> sizes;
+    std::uint32_t nrSegments;
+    std::size_t offset;
+    std::uint32_t firstSegmentSize;
+  };
   // Common::UDPSocket mSocket;
-  // Common::StreamSocketServer mSocket;
+  Common::StreamSocketServer mSocket;
   Writer<bufSize>& mWriter;
 
-  FrogFish::WebSocket mWebSocket;
+  // FrogFish::WebSocket mWebSocket;
 
   bool mNoop{false};
+  bool mReceiving{false};
+
+  std::vector<char> mMessageBuffer;
+  std::size_t mDataRemaining{0};
+  std::size_t mBufferOffset{0};
 
   std::shared_ptr<spdlog::logger> mLogger;
 };

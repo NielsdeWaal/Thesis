@@ -10,6 +10,7 @@
 #include <capnp/serialize.h>
 #include <chrono>
 #include <memory>
+#include <numeric>
 #include <string>
 #include <sys/mman.h>
 #include <thread>
@@ -17,14 +18,16 @@
 
 class FrogFishClient
 : public EventLoop::IEventLoopCallbackHandler
-// , public Common::IStreamSocketHandler
-, public FrogFish::IWebSocketHandler {
+, public Common::IStreamSocketHandler
+// , public FrogFish::IWebSocketHandler 
+{
 public:
   FrogFishClient(EventLoop::EventLoop& ev)
   : mEv(ev)
   , mManagementPort(mEv)
-  /*, mDataPort(ev, this) ,*/
-  , mWebSocket(ev, this) {
+  , mDataPort(ev, this)
+  // , mWebSocket(ev, this) 
+  {
     mLogger = mEv.RegisterLogger("FrogFishClient");
     mEv.RegisterCallbackHandler(this, EventLoop::EventLoop::LatencyType::Low);
 
@@ -83,12 +86,15 @@ public:
       // std::size_t count = mSendCount - mPrevCount;
       std::size_t count = mSendCount;
       // Common::MONOTONIC_TIME sinceStart = Common::MONOTONIC_CLOCK::Now() - mStartTS;
+      Common::MONOTONIC_TIME totalEncoding = std::accumulate(mEncodingDelay.begin(), mEncodingDelay.end(), 0);
       Common::MONOTONIC_TIME took = Common::MONOTONIC_CLOCK::Now() - mLastTS;
-      double rate = count / (Common::MONOTONIC_CLOCK::ToNanos(took) / 1000000000.);
+      double rate = count / ((Common::MONOTONIC_CLOCK::ToNanos(took) / 1000000000.) - Common::MONOTONIC_CLOCK::ToNanos(totalEncoding) / 1000000000);
+      double percentage = (Common::MONOTONIC_CLOCK::ToNanos(totalEncoding) / Common::MONOTONIC_CLOCK::ToNanos(took)) * 100;
 
-      mLogger->info("took: {}, count: {}, rate: {}", Common::MONOTONIC_CLOCK::ToNanos(took), count, rate);
+      mLogger->info("encoding raw: {}, encoding %: {}, took: {}, count: {}, rate: {}", totalEncoding, percentage,  Common::MONOTONIC_CLOCK::ToNanos(took), count, rate);
       mStats.emplace_back(Common::MONOTONIC_CLOCK::ToNanos(took), count, rate);
 
+      mEncodingDelay.clear();
       mLastTS = Common::MONOTONIC_CLOCK::Now();
       mPrevCount = count;
       mSendCount = 0;
@@ -186,8 +192,8 @@ public:
       mCapWrapper->words = kj::arrayPtr(const_cast<capnp::word*>(message.getEnd()), mCapWrapper->words.end());
     }
     if (mManagementPort.RequestsDone() && !mConnected && !mConnectionInProg) {
-      // mDataPort.Connect("127.0.0.1", 1337);
-      mWebSocket.Configure("ws://127.0.0.1", 1337);
+      mDataPort.Connect("127.0.0.1", 1337);
+      // mWebSocket.Configure("ws://127.0.0.1", 1337);
       mConnectionInProg = true;
       return;
     }
@@ -212,35 +218,35 @@ public:
         //              proto::InsertionBatch::Message>::Builder::Iterator>
         //          i(mDataBatches.begin(), messages.begin());
         //      i.first != mDataBatches.end(); ++i.first, ++i.second) {
-        for (auto [k, v] : mDataBatches) {
-          ::capnp::MallocMessageBuilder ingestMessage;
-          proto::InsertionBatch::Builder batch = ingestMessage.initRoot<proto::InsertionBatch>();
-          ::capnp::List<proto::InsertionBatch::Message>::Builder messages = batch.initRecordings(1);
-          // ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder
-          //     measurements = i.second->initMeasurements(i.first->second.size());
-          ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder measurements =
-              messages[0].initMeasurements(v.size());
-          messages[0].setTag(mManagementPort.GetTagForName(k));
+        // for (auto [k, v] : mDataBatches) {
+        //   ::capnp::MallocMessageBuilder ingestMessage;
+        //   proto::InsertionBatch::Builder batch = ingestMessage.initRoot<proto::InsertionBatch>();
+        //   ::capnp::List<proto::InsertionBatch::Message>::Builder messages = batch.initRecordings(1);
+        //   // ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder
+        //   //     measurements = i.second->initMeasurements(i.first->second.size());
+        //   ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder measurements =
+        //       messages[0].initMeasurements(v.size());
+        //   messages[0].setTag(mManagementPort.GetTagForName(k));
 
-          for (std::pair<
-                   std::vector<std::pair<std::uint64_t, std::int64_t>>::iterator,
-                   ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder::Iterator>
-                   j(v.begin(), measurements.begin());
-               j.first != v.end();
-               ++j.first, ++j.second) {
-            j.second->setTimestamp(j.first->first);
-            j.second->setValue(j.first->second);
-          }
-          auto encodedArray = capnp::messageToFlatArray(ingestMessage);
-          auto encodedArrayPtr = encodedArray.asChars();
-          auto encodedCharArray = encodedArrayPtr.begin();
-          auto size = encodedArrayPtr.size();
+        //   for (std::pair<
+        //            std::vector<std::pair<std::uint64_t, std::int64_t>>::iterator,
+        //            ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder::Iterator>
+        //            j(v.begin(), measurements.begin());
+        //        j.first != v.end();
+        //        ++j.first, ++j.second) {
+        //     j.second->setTimestamp(j.first->first);
+        //     j.second->setValue(j.first->second);
+        //   }
+        //   auto encodedArray = capnp::messageToFlatArray(ingestMessage);
+        //   auto encodedArrayPtr = encodedArray.asChars();
+        //   auto encodedCharArray = encodedArrayPtr.begin();
+        //   auto size = encodedArrayPtr.size();
 
-          // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
-          // mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
-          // mDataPort.Send(encodedCharArray, size);
-          mWebSocket.Send(encodedCharArray, size);
-        }
+        //   // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
+        //   // mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
+        //   mDataPort.Send(encodedCharArray, size);
+        //   // mWebSocket.Send(encodedCharArray, size);
+        // }
 
         // auto encodedArray = capnp::messageToFlatArray(ingestMessage);
         // auto encodedArrayPtr = encodedArray.asChars();
@@ -262,6 +268,8 @@ public:
             batch.initRecordings(mTaggedDataBatches.size());
 
         // for (auto [tag, values] : mTaggedDataBatches) {
+        auto startEncode = Common::MONOTONIC_CLOCK::Now();
+        std::uint64_t count{0};
         for (std::pair<
                  std::unordered_map<std::uint64_t, std::vector<std::pair<std::uint64_t, std::int64_t>>>::iterator,
                  ::capnp::List<proto::InsertionBatch::Message>::Builder::Iterator>
@@ -282,20 +290,31 @@ public:
                ++j.first, ++j.second) {
             j.second->setTimestamp(j.first->first);
             j.second->setValue(j.first->second);
+            ++count;
           }
         }
         auto encodedArray = capnp::messageToFlatArray(ingestMessage);
         auto encodedArrayPtr = encodedArray.asChars();
         auto encodedCharArray = encodedArrayPtr.begin();
         auto size = encodedArrayPtr.size();
+        mEncodingDelay.emplace_back(Common::MONOTONIC_CLOCK::Now() - startEncode);
 
-        // mLogger->info("Sending request, size: {}, vec size: {}", size, v.size());
+        // auto segments = ingestMessage.getSegmentsForOutput();
+
+        // for (const kj::ArrayPtr<const capnp::word>& segment : segments) {
+        //   mLogger->info("Sending request, size: {}", segment.size());
+        //   mDataPort.Send(segment.asChars().begin(), segment.size());
+        // }
+
         // mDataPort.Send(encodedCharArray, size, "127.0.0.1", 1337);
-        // mDataPort.Send(encodedCharArray, size);
-        mWebSocket.Send(encodedCharArray, size);
+
+        mDataPort.Send(encodedCharArray, size);
+        // mLogger->info("Sending data size: {}", size);
+
+        // mWebSocket.Send(encodedCharArray, size);
         // mSendTS = Common::MONOTONIC_CLOCK::Now();
         // mSendSize += size;
-        mSendCount += 10000;
+        mSendCount += count;
         // mStats.back().mSendTS = Common::MONOTONIC_CLOCK::Now();
         // mStats.back().mSendCount += 10000;
         // mStats.back().mSendSize += size;
@@ -323,14 +342,14 @@ public:
     mEv.AddTimer(&mPrintTimer);
     // mSendTS = Common::MONOTONIC_CLOCK::Now();
   }
-  // void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
-  void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
+  void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
+  // void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
 
-  // void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, [[maybe_unused]] char* data, [[maybe_unused]]
-  // std::size_t len) final {
-  void OnIncomingData(
-      [[maybe_unused]] websocketpp::connection_hdl conn,
-      [[maybe_unused]] FrogFish::ClientSocket::message_ptr msg) final {
+  void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, [[maybe_unused]] char* data, [[maybe_unused]]
+  std::size_t len) final {
+  // void OnIncomingData(
+  //     [[maybe_unused]] websocketpp::connection_hdl conn,
+  //     [[maybe_unused]] FrogFish::ClientSocket::message_ptr msg) final {
     // TODO verify data confirmation
     // mLogger->info("Go completion from DB");
     mWaiting = false;
@@ -357,9 +376,9 @@ private:
 
   EventLoop::EventLoop& mEv;
   ManagementPort mManagementPort;
-  // Common::StreamSocket mDataPort;
+  Common::StreamSocket mDataPort;
 
-  FrogFish::WebSocket mWebSocket;
+  // FrogFish::WebSocket mWebSocket;
 
   bool mWaiting{false};
   bool mConnectionInProg{false};
@@ -385,6 +404,7 @@ private:
   Common::MONOTONIC_TIME mStartTS{Common::MONOTONIC_CLOCK::Now()};
   Common::MONOTONIC_TIME mLastTS{Common::MONOTONIC_CLOCK::Now()};
   std::vector<std::tuple<std::uint64_t,std::uint64_t,double>> mStats;
+  std::vector<Common::MONOTONIC_TIME> mEncodingDelay;
 
   EventLoop::EventLoop::Timer mPrintTimer;
 
