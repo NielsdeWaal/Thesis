@@ -175,6 +175,13 @@ FetchContent_Declare(
     GIT_TAG origin/develop
 )
 
+FetchContent_Declare(
+    doctest
+
+    GIT_REPOSITORY git@github.com:doctest/doctest.git
+    GIT_TAG origin/master
+)
+
 add_definitions(-DBoost_USE_STATIC_LIBS=ON)
 find_package(Boost REQUIRED COMPONENTS filesystem system thread regex)
 add_library(PMSWebsockets INTERFACE)

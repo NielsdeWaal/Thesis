@@ -16,6 +16,13 @@
 #include <thread>
 #include <utility>
 
+// Move processing to following files:
+// - write raw
+// - write preprocessed
+// - write influx?
+
+// Generalize benchmarking to be able to work with all file types
+
 class FrogFishClient
 : public EventLoop::IEventLoopCallbackHandler
 , public Common::IStreamSocketHandler

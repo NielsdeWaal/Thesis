@@ -129,18 +129,18 @@ public:
       //                           "(range 1464710340000000000 1464720460000000000)"
       //                           "(groupby 1h avg))");
 
-      mQueryManager.SubmitQuery("(->>"
-                                "(metric \"usage_user\")"
-                                "(tag \"hostname\" '(\"host_0\"))"
-                                "(range 1464710340000000000 1464720460000000000)"
-                                "(groupby 10m avg))");
-      auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
-      // auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}, {"service", {"9"}}});
-      auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}});
+      // mQueryManager.SubmitQuery("(->>"
+      //                           "(metric \"usage_user\")"
+      //                           "(tag \"hostname\" '(\"host_0\"))"
+      //                           "(range 1464710340000000000 1464720460000000000)"
+      //                           "(groupby 10m avg))");
       // auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
-      assert(kvRes.has_value());
-      // mLogger->warn("tag; {}", fmt::join(tagRes.value(), ", "));
-      mLogger->warn("result tag: {}", kvRes.value());
+      // // auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}, {"service", {"9"}}});
+      // auto kvRes = mMetaData.GetIndex("usage_user", {{"hostname", {"host_0"}}});
+      // // auto tagRes = mMetaData.QueryValues("hostname", {"host_0"});
+      // assert(kvRes.has_value());
+      // // mLogger->warn("tag; {}", fmt::join(tagRes.value(), ", "));
+      // mLogger->warn("result tag: {}", kvRes.value());
 
       // // std::optional<std::uint64_t> targetIndex = mInputs.GetIndex(queryTarget);
       // std::optional<std::uint64_t> targetIndex = mMetaData.GetIndexByName(queryTarget);
