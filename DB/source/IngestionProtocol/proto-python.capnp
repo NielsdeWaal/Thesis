@@ -24,10 +24,12 @@ struct Batch {
 struct IdRequest {
 	tagSet @0 :List(Tag);
 	metric @1 :Text;
+	identifier @2 :UInt64;
 }
 
 struct IdResponse {
 	setId @0 :UInt64;
+	identifier @1 :UInt64;
 }
 
 struct InsertionBatch {
@@ -42,4 +44,8 @@ struct InsertionBatch {
 	}
 	
 	recordings @0 :List(Message);
+}
+
+struct InsertionResponse {
+	
 }

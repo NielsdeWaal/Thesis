@@ -58,6 +58,14 @@ with open("./quest_smp1.csv") as questFile:
         psBox[-1].append(val)
 
 psBox.append([])
+with open("./quest_smp1_influx_protocol.csv") as questFile:
+    questReader = csv.reader(questFile)
+    qheaders = next(questReader)
+    for qrow in questReader:
+        val = float(qrow[1])
+        psBox[-1].append(val)
+
+psBox.append([])
 with open("./clickhouse_smp1.csv") as questFile:
     questReader = csv.reader(questFile)
     qheaders = next(questReader)
@@ -81,14 +89,14 @@ ax2.set_xlabel("Time")
 ax2.set_title("Ingestion bandwidth (Points per second)")
 ax2.plot(xaxis, ps)
 
-plt.savefig("ff_bandwidth_overview.png", dpi=400)
+plt.savefig("ff_bandwidth_overview.png", dpi=200)
 
-labels = ["FrogFishDB", "InfluxDB", "QuestDB", "Clickhouse"]
+labels = ["FrogFishDB", "InfluxDB", "QuestDB", "QuestDB (influx)", "Clickhouse"]
 fig, ax = plt.subplots()
 ax.set_ylabel("Points per second (million)")
 ax.boxplot(psBox, labels=labels)
 
 # plt.show()
-plt.savefig("tsdb_boxplot.png", dpi=400)
+plt.savefig("tsdb_boxplot.png", dpi=200)
 
 ff_memtable_plots()
