@@ -48,12 +48,17 @@ public:
     return static_cast<Common::IStreamSocketHandler*>(this);
   }
 
-  void OnIncomingData([[maybe_unused]] Common::StreamSocket* conn, char* data, size_t len) override {
+  void OnIncomingData(Common::StreamSocket* conn, char* data, size_t len) override {
+    if(!mBuffers.contains(conn)) {
+      mLogger->info("Registered buffers for new connection");
+      mBuffers[conn] = ConnBuffer{};
+    }
     mLogger->trace("Received message of size: {}", len);
     // auto res = capnp::expectedSizeInWordsFromPrefix(kj::arrayPtr(( const capnp::word* ) data, len /
     // sizeof(capnp::word))); mLogger->info("expected size: {}", res * sizeof(capnp::word));
 
-    if (!mReceiving) {
+    auto& buff = mBuffers[conn];
+    if (!buff.mReceiving) {
       capnpHeader header = ProcessSegmentTable(data, len);
       auto overflow = header.totalSize <=> len;
       mLogger->debug(
@@ -67,84 +72,87 @@ public:
           overflow < 0,
           overflow == 0);
 
-      if (mMessageBuffer.capacity() < header.totalSize) {
-        mMessageBuffer.reserve(header.totalSize);
+      if (buff.mMessageBuffer.capacity() < header.totalSize) {
+        buff.mMessageBuffer.reserve(header.totalSize);
       }
 
       // std::memcpy(mMessageBuffer.data(), data, len);
       std::size_t dataLen = std::min(len, header.totalSize);
       for (std::size_t i = 0; i < dataLen; ++i) {
-        mMessageBuffer.emplace_back(data[i]);
+        buff.mMessageBuffer.emplace_back(data[i]);
       }
 
       if (overflow > 0) {
-        mBufferOffset = len;
-        mReceiving = true;
-        mDataRemaining = header.totalSize - len;
+        buff.mBufferOffset = len;
+        buff.mReceiving = true;
+        buff.mDataRemaining = header.totalSize - len;
       } else if (overflow < 0) {
         // More than one message in the buffer, recurse to process possible new message
-        ProcessMessage();
+        ProcessMessage(buff);
         OnIncomingData(conn, data + header.totalSize, len - header.totalSize);
       } else if (overflow == 0) {
         // Received exact message
-        ProcessMessage();
+        ProcessMessage(buff);
         SendResponse(conn);
       }
-    } else if (mDataRemaining > 0) {
+    } else if (buff.mDataRemaining > 0) {
       // std::memcpy(mMessageBuffer.data() + mBufferOffset, data, len);
-      std::size_t dataLen = std::min(len, mDataRemaining);
+      std::size_t dataLen = std::min(len, buff.mDataRemaining);
       for (std::size_t i = 0; i < dataLen; ++i) {
-        mMessageBuffer.emplace_back(data[i]);
+        buff.mMessageBuffer.emplace_back(data[i]);
       }
 
-      bool overflow = mDataRemaining < len;
+      bool overflow = buff.mDataRemaining < len;
 
-      mDataRemaining -= dataLen;
-      mBufferOffset += dataLen;
-      mLogger->debug("Bytes remaining: {}, overflow: {}", mDataRemaining, overflow);
+      buff.mDataRemaining -= dataLen;
+      buff.mBufferOffset += dataLen;
+      mLogger->debug("Bytes remaining: {}, overflow: {}", buff.mDataRemaining, overflow);
 
-      if (mDataRemaining == 0) {
+      if (buff.mDataRemaining == 0) {
         mLogger->trace("Received full message, parsing...");
 
-        ProcessMessage();
+        ProcessMessage(buff);
         SendResponse(conn);
 
-        mMessageBuffer.clear();
-        mReceiving = false;
+        buff.mMessageBuffer.clear();
+        buff.mReceiving = false;
       }
     }
   }
 
 private:
   struct capnpHeader;
+  struct ConnBuffer;
 
-  void ProcessMessage() {
-    auto pdata =
-        kj::arrayPtr(( const capnp::word* ) mMessageBuffer.data(), mMessageBuffer.size() / sizeof(capnp::word));
+  void ProcessMessage(ConnBuffer& conn) {
+    const auto pdata =
+        kj::arrayPtr(( const capnp::word* ) conn.mMessageBuffer.data(), conn.mMessageBuffer.size() / sizeof(capnp::word));
     capnp::FlatArrayMessageReader msg{pdata};
     proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
+
     std::uint64_t ingestCount{0};
     Common::MONOTONIC_TIME start{Common::MONOTONIC_CLOCK::Now()};
     // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
     // auto msgs = insertMsg.getRecordings();
     for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
-      // mLogger->trace("Received insert for tag: {}", batch.getTag());
+      // mLogger->info("Received insert for tag: {}", batch.getTag());
       for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
         mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
         ++ingestCount;
       }
     }
+
     auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
     double timeTakenS = duration / 1000000000.;
     double rateS = ingestCount / timeTakenS;
     double dataRate = (rateS * 128) / 1000000;
-    mLogger->info(
-        "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
-        ingestCount,
-        mMessageBuffer.size(),
-        timeTakenS,
-        dataRate,
-        rateS);
+    // mLogger->info(
+    //     "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
+    //     ingestCount,
+    //     conn.mMessageBuffer.size(),
+    //     timeTakenS,
+    //     dataRate,
+    //     rateS);
   }
 
   void SendResponse(Common::StreamSocket* conn) {
@@ -183,18 +191,20 @@ private:
     std::size_t offset;
     std::uint32_t firstSegmentSize;
   };
+  struct ConnBuffer {
+    bool mReceiving{false};
+
+    std::vector<char> mMessageBuffer;
+    std::size_t mDataRemaining{0};
+    std::size_t mBufferOffset{0};
+  };
   // Common::UDPSocket mSocket;
   Common::StreamSocketServer mSocket;
   Writer<bufSize>& mWriter;
+  std::unordered_map<Common::StreamSocket*, ConnBuffer> mBuffers;
+  bool mNoop{false};
 
   // FrogFish::WebSocket mWebSocket;
-
-  bool mNoop{false};
-  bool mReceiving{false};
-
-  std::vector<char> mMessageBuffer;
-  std::size_t mDataRemaining{0};
-  std::size_t mBufferOffset{0};
 
   std::shared_ptr<spdlog::logger> mLogger;
 };
