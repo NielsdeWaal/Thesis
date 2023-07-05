@@ -65,12 +65,12 @@ public:
   }
 
   // void Insert(const std::string& name, std::uint64_t ts, std::int64_t value) {
-    // int index{0};
-    // if (auto nameIndex = mInputs.GetIndex(name); nameIndex.has_value()) {
-    //   index = nameIndex.value();
-    // } else {
-    //   index = mInputs.InsertSeries(name);
-    // }
+  // int index{0};
+  // if (auto nameIndex = mInputs.GetIndex(name); nameIndex.has_value()) {
+  //   index = nameIndex.value();
+  // } else {
+  //   index = mInputs.InsertSeries(name);
+  // }
   //   int index = mMetadata.Insert(const int &tags)
   //   WriteToIndex(index, ts, value);
   // }
@@ -125,7 +125,13 @@ private:
 
     auto& db = mTrees[index];
     if (timestamp < db->memtable.GetTableEnd() || timestamp < db->tree.GetRoot()->GetNodeEnd()) {
-      // mLogger->info("Already inge");
+      mLogger->info(
+          "Already ingested ts: {}, memtable end: {}, ptr: {}, < MemTableEnd: {}, < TreeEnd {}",
+          timestamp,
+          db->memtable.GetTableEnd(),
+          fmt::ptr(db.get()),
+          timestamp < db->memtable.GetTableEnd(),
+          timestamp < db->tree.GetRoot()->GetNodeEnd());
       // name.resize(name.size() - measurement.getName().size());
       return;
     }
@@ -158,7 +164,6 @@ private:
       mLogOffset += 512;
       db->ctr = 0;
     }
-    
   }
   enum class File : std::uint8_t {
     NODE_FILE = 0,

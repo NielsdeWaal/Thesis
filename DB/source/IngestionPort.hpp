@@ -130,14 +130,18 @@ private:
     capnp::FlatArrayMessageReader msg{pdata};
     proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
 
+    std::vector<std::uint64_t> tags;
+    tags.reserve(50);
     std::uint64_t ingestCount{0};
     Common::MONOTONIC_TIME start{Common::MONOTONIC_CLOCK::Now()};
     // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
     // auto msgs = insertMsg.getRecordings();
     for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
       // mLogger->info("Received insert for tag: {}", batch.getTag());
+      const std::uint64_t tag{batch.getTag()};
+      tags.emplace_back(tag);
       for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
-        mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
+        mWriter.Insert(tag, meas.getTimestamp(), meas.getValue());
         ++ingestCount;
       }
     }
@@ -146,6 +150,7 @@ private:
     double timeTakenS = duration / 1000000000.;
     double rateS = ingestCount / timeTakenS;
     double dataRate = (rateS * 128) / 1000000;
+    // mLogger->info("Processed tags: {}", fmt::join(tags, ", "));
     // mLogger->info(
     //     "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
     //     ingestCount,

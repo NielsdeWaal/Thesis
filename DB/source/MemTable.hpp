@@ -35,7 +35,6 @@ public:
 
 template<typename Compressor, std::size_t BufSize> class Memtable {
 public:
-  Memtable() = default;
   Memtable(EventLoop::EventLoop& ev)
   : mEv(ev)
   , mBuffer(ev.AllocateDmaBuffer(BufSize))
