@@ -63,7 +63,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((HOST, MANAGEMENT_PORT))
 
     for test in tagsets:
-        print(test)
         metric = test.split(',')[0]
 
         req = BATCH_CAPNP.IdRequest.new_message()
@@ -83,12 +82,17 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             mapping[tagset_string] = resp.setId
 
 with open(args.filename, 'r') as f:
+    nr_batches = 0
     strings = []
     for line in f:
         strings.append(line.strip())
         if len(strings) == int(args.chunksize):
             write_batch(strings)
+            nr_batches += 1
             strings = []
 
     if strings:
         write_batch(strings)
+        nr_batches += 1
+
+    print(f"Generated {nr_batches} batches for ingestion")

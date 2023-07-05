@@ -148,6 +148,101 @@ public:
   //   the send batches.
 
   void OnEventLoopCallback() {
+    if (mMode == Mode::BATCH) {
+      ProcessBatchesFile();
+    } else if (mMode == Mode::PREPROCESSED) {
+      SendPreprocessedFile();
+    }
+  }
+
+  void OnConnected() final {
+    mLogger->info("Connected to server");
+    mConnected = true;
+    mEv.AddTimer(&mPrintTimer);
+    // mSendTS = Common::MONOTONIC_CLOCK::Now();
+  }
+  void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
+  // void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
+
+  void OnIncomingData(
+      [[maybe_unused]] Common::StreamSocket* conn,
+      [[maybe_unused]] char* data,
+      [[maybe_unused]] std::size_t len) final {
+    // void OnIncomingData(
+    //     [[maybe_unused]] websocketpp::connection_hdl conn,
+    //     [[maybe_unused]] FrogFish::ClientSocket::message_ptr msg) final {
+    // TODO verify data confirmation
+    mLogger->debug("Go completion from DB");
+    mWaiting = false;
+    // mStats.back().mConfirmTS = Common::MONOTONIC_CLOCK::Now();
+  }
+
+private:
+  enum class Mode : std::uint8_t { BATCH = 0, PREPROCESSED };
+
+  struct CapnpWrapper {
+    CapnpWrapper(int fd) {
+      struct stat stats;
+      ::fstat(fd, &stats);
+      std::size_t size = stats.st_size;
+      void* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+      if (data == MAP_FAILED) {
+        spdlog::critical("Failed to mmap");
+      }
+      ::madvise(data, size, MADV_SEQUENTIAL);
+
+      words = kj::ArrayPtr<capnp::word>(reinterpret_cast<capnp::word*>(data), size / sizeof(capnp::word));
+    }
+
+    kj::ArrayPtr<capnp::word> words;
+  };
+
+  void SendPreprocessedFile() {
+    if (!mConnected && !mConnectionInProg) {
+      mDataPort.Connect("127.0.0.1", 1337);
+      mConnectionInProg = true;
+      return;
+    } else if (mConnected && !mWaiting) {
+      kj::ArrayPtr<capnp::word> batch = mCapWrapper->words;
+      using namespace std::chrono_literals;
+      if (batch.size() == 0) {
+        mLogger->info("Ingestion done, ingested: {} in {} sec", mTotalSend, Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - mStartTS) / 1000000000.);
+
+        std::ofstream output("res.csv");
+        output << "time period,count period,rate period\n";
+        for (const auto& tup : mStats) {
+          mLogger->info("res: {},{},{}", std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
+          output << fmt::format("{},{},{}\n", std::get<0>(tup), std::get<1>(tup), std::get<2>(tup));
+        }
+        output.flush();
+
+        exit(0);
+        return;
+      }
+      capnp::FlatArrayMessageReader message(batch);
+      ::capnp::MallocMessageBuilder builder;
+      ::capnp::initMessageBuilderFromFlatArrayCopy(batch, builder);
+      auto chunk = builder.getRoot<proto::InsertionBatch>();
+
+      auto encodedArray = capnp::messageToFlatArray(builder);
+      auto encodedArrayPtr = encodedArray.asChars();
+      auto encodedCharArray = encodedArrayPtr.begin();
+      auto size = encodedArrayPtr.size();
+      mDataPort.Send(encodedCharArray, size);
+      mLogger->trace("Sending data size: {}", size);
+      mWaiting = true;
+
+      auto reader = chunk.asReader();
+      for (const auto& rec : reader.getRecordings()) {
+        mTotalSend += rec.getMeasurements().size();
+        mSendCount += rec.getMeasurements().size();
+      }
+
+      mCapWrapper->words = kj::arrayPtr(const_cast<capnp::word*>(message.getEnd()), mCapWrapper->words.end());
+    }
+  }
+
+  void ProcessBatchesFile() {
     if (mDataBatches.empty() && mTaggedDataBatches.empty()) {
       auto batch = mCapWrapper->words;
       using namespace std::chrono_literals;
@@ -236,19 +331,19 @@ public:
           //   ::capnp::List<proto::InsertionBatch::Message>::Builder messages = batch.initRecordings(1);
           //   // ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder
           //   //     measurements = i.second->initMeasurements(i.first->second.size());
-            ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder measurements =
-                i.second->initMeasurements(i.first->second.size());
-            i.second->setTag(mManagementPort.GetTagForName(i.first->first));
+          ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder measurements =
+              i.second->initMeasurements(i.first->second.size());
+          i.second->setTag(mManagementPort.GetTagForName(i.first->first));
 
-            for (std::pair<
-                     std::vector<std::pair<std::uint64_t, std::int64_t>>::iterator,
-                     ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder::Iterator>
-                     j(i.first->second.begin(), measurements.begin());
-                 j.first != i.first->second.end();
-                 ++j.first, ++j.second) {
-              j.second->setTimestamp(j.first->first);
-              j.second->setValue(j.first->second);
-            }
+          for (std::pair<
+                   std::vector<std::pair<std::uint64_t, std::int64_t>>::iterator,
+                   ::capnp::List<proto::InsertionBatch::Message::Measurement>::Builder::Iterator>
+                   j(i.first->second.begin(), measurements.begin());
+               j.first != i.first->second.end();
+               ++j.first, ++j.second) {
+            j.second->setTimestamp(j.first->first);
+            j.second->setValue(j.first->second);
+          }
           //   auto encodedArray = capnp::messageToFlatArray(ingestMessage);
           //   auto encodedArrayPtr = encodedArray.asChars();
           //   auto encodedCharArray = encodedArrayPtr.begin();
@@ -349,46 +444,6 @@ public:
     }
   }
 
-  void OnConnected() final {
-    mLogger->info("Connected to server");
-    mConnected = true;
-    mEv.AddTimer(&mPrintTimer);
-    // mSendTS = Common::MONOTONIC_CLOCK::Now();
-  }
-  void OnDisconnect([[maybe_unused]] Common::StreamSocket* conn) final {}
-  // void OnDisconnect([[maybe_unused]] websocketpp::connection_hdl conn) final {}
-
-  void OnIncomingData(
-      [[maybe_unused]] Common::StreamSocket* conn,
-      [[maybe_unused]] char* data,
-      [[maybe_unused]] std::size_t len) final {
-    // void OnIncomingData(
-    //     [[maybe_unused]] websocketpp::connection_hdl conn,
-    //     [[maybe_unused]] FrogFish::ClientSocket::message_ptr msg) final {
-    // TODO verify data confirmation
-    // mLogger->info("Go completion from DB");
-    mWaiting = false;
-    // mStats.back().mConfirmTS = Common::MONOTONIC_CLOCK::Now();
-  }
-
-private:
-  struct CapnpWrapper {
-    CapnpWrapper(int fd) {
-      struct stat stats;
-      ::fstat(fd, &stats);
-      std::size_t size = stats.st_size;
-      void* data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
-      if (data == MAP_FAILED) {
-        spdlog::critical("Failed to mmap");
-      }
-      ::madvise(data, size, MADV_SEQUENTIAL);
-
-      words = kj::ArrayPtr<capnp::word>(reinterpret_cast<capnp::word*>(data), size / sizeof(capnp::word));
-    }
-
-    kj::ArrayPtr<capnp::word> words;
-  };
-
   EventLoop::EventLoop& mEv;
   ManagementPort mManagementPort;
   Common::StreamSocket mDataPort;
@@ -415,6 +470,7 @@ private:
   // std::vector<Stats> mStats;
   std::size_t mPrevCount{0};
   std::size_t mSendCount{0};
+  std::size_t mTotalSend{0};
 
   Common::MONOTONIC_TIME mStartTS{Common::MONOTONIC_CLOCK::Now()};
   Common::MONOTONIC_TIME mLastTS{Common::MONOTONIC_CLOCK::Now()};
@@ -422,6 +478,8 @@ private:
   std::vector<Common::MONOTONIC_TIME> mEncodingDelay;
 
   EventLoop::EventLoop::Timer mPrintTimer;
+
+  Mode mMode{Mode::PREPROCESSED};
 
   // capnp related parameters
   std::unique_ptr<CapnpWrapper> mCapWrapper;

@@ -86,7 +86,9 @@ public:
         ProcessMessage();
         OnIncomingData(conn, data + header.totalSize, len - header.totalSize);
       } else if (overflow == 0) {
+        // Received exact message
         ProcessMessage();
+        SendResponse(conn);
       }
     } else if (mDataRemaining > 0) {
       // std::memcpy(mMessageBuffer.data() + mBufferOffset, data, len);
@@ -105,7 +107,7 @@ public:
         mLogger->trace("Received full message, parsing...");
 
         ProcessMessage();
-        // SendResponse(conn);
+        SendResponse(conn);
 
         mMessageBuffer.clear();
         mReceiving = false;
@@ -126,7 +128,7 @@ private:
     // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
     // auto msgs = insertMsg.getRecordings();
     for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
-      mLogger->trace("Received insert for tag: {}", batch.getTag());
+      // mLogger->trace("Received insert for tag: {}", batch.getTag());
       for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
         mWriter.Insert(batch.getTag(), meas.getTimestamp(), meas.getValue());
         ++ingestCount;
