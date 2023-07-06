@@ -149,15 +149,15 @@ private:
     auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
     double timeTakenS = duration / 1000000000.;
     double rateS = ingestCount / timeTakenS;
-    double dataRate = (rateS * 128) / 1000000;
-    // mLogger->info("Processed tags: {}", fmt::join(tags, ", "));
-    // mLogger->info(
-    //     "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
-    //     ingestCount,
-    //     conn.mMessageBuffer.size(),
-    //     timeTakenS,
-    //     dataRate,
-    //     rateS);
+    double dataRate = (rateS * 16) / 1000000;
+    mLogger->trace("Processed tags: {}", fmt::join(tags, ", "));
+    mLogger->debug(
+        "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
+        ingestCount,
+        conn.mMessageBuffer.size(),
+        timeTakenS,
+        dataRate,
+        rateS);
   }
 
   void SendResponse(Common::StreamSocket* conn) {
