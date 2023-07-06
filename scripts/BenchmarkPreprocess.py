@@ -62,6 +62,9 @@ with open(args.filename, 'r') as f:
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((HOST, MANAGEMENT_PORT))
 
+    print(tagsets)
+    print(len(tagsets))
+
     for test in tagsets:
         metric = test.split(',')[0]
 
@@ -80,6 +83,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         with BATCH_CAPNP.IdResponse.from_bytes(s.recv(1024)) as resp:
             tagset_string = ",".join(test.split(',')[1:-1]) + "," + test.split(',')[-1]
             mapping[tagset_string] = resp.setId
+
+print(mapping)
 
 with open(args.filename, 'r') as f:
     nr_batches = 0

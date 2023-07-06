@@ -126,8 +126,9 @@ private:
     auto& db = mTrees[index];
     if (timestamp < db->memtable.GetTableEnd() || timestamp < db->tree.GetRoot()->GetNodeEnd()) {
       mLogger->info(
-          "Already ingested ts: {}, memtable end: {}, ptr: {}, < MemTableEnd: {}, < TreeEnd {}",
+          "Already ingested ts: {} on index: {}, memtable end: {}, ptr: {}, < MemTableEnd: {}, < TreeEnd {}",
           timestamp,
+          index,
           db->memtable.GetTableEnd(),
           fmt::ptr(db.get()),
           timestamp < db->memtable.GetTableEnd(),

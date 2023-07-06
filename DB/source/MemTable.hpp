@@ -44,6 +44,8 @@ public:
 
   bool IsFull() {
     const std::size_t margin = mCompressor.GetMargin();
+    // return whether or not the amount of space left in the buffer is enough
+    // for the margin determined by the compressor
     return static_cast<std::size_t>(mEnd - mPtr) < margin;
   }
 

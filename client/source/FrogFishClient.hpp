@@ -5,7 +5,7 @@
 #include "ManagementPort.hpp"
 #include "TSC.h"
 #include "UDPSocket.h"
-#include "WebSocket.hpp"
+// #include "WebSocket.hpp"
 
 #include <capnp/serialize.h>
 #include <chrono>
@@ -102,18 +102,20 @@ public:
           (Common::MONOTONIC_CLOCK::ToNanos(totalEncoding) / Common::MONOTONIC_CLOCK::ToNanos(took)) * 100;
 
       mLogger->info(
-          "encoding raw: {}, encoding %: {}, took: {}, count: {}, rate: {}",
+          "encoding raw: {}, encoding %: {}, took: {}, count: {}, rate: {}, tags: {}",
           totalEncoding,
           percentage,
           Common::MONOTONIC_CLOCK::ToNanos(took),
           count,
-          rate);
+          rate,
+          fmt::join(tagsSend,", "));
       mStats.emplace_back(Common::MONOTONIC_CLOCK::ToNanos(took), count, rate);
 
       mEncodingDelay.clear();
       mLastTS = Common::MONOTONIC_CLOCK::Now();
       mPrevCount = count;
       mSendCount = 0;
+      tagsSend.clear();
     });
   }
 
@@ -234,8 +236,10 @@ private:
 
       auto reader = chunk.asReader();
       for (const auto& rec : reader.getRecordings()) {
-        mTotalSend += rec.getMeasurements().size();
-        mSendCount += rec.getMeasurements().size();
+        auto measurements = rec.getMeasurements();
+        mTotalSend += measurements.size();
+        mSendCount += measurements.size();
+        tagsSend.insert(rec.getTag());
       }
 
       mCapWrapper->words = kj::arrayPtr(const_cast<capnp::word*>(message.getEnd()), mCapWrapper->words.end());
@@ -480,6 +484,7 @@ private:
   EventLoop::EventLoop::Timer mPrintTimer;
 
   Mode mMode{Mode::PREPROCESSED};
+  std::unordered_set<std::uint64_t> tagsSend;
 
   // capnp related parameters
   std::unique_ptr<CapnpWrapper> mCapWrapper;
