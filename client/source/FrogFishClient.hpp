@@ -15,6 +15,7 @@
 #include <sys/mman.h>
 #include <thread>
 #include <utility>
+#include <set>
 
 // Move processing to following files:
 // - write raw
@@ -129,9 +130,25 @@ public:
       mLogger->error("Failed to open {}, errno: {}", filename, fd);
     }
     mCapWrapper = std::make_unique<CapnpWrapper>(fd);
+
     mManagementPort.Connect(
         config->get_as<std::string>("DatabaseHost").value_or("127.0.0.1"),
         config->get_as<std::uint16_t>("ManagementPort").value_or(0));
+
+    mSync = config->get_as<bool>("Sync").value_or(true);
+
+    std::string mode = config->get_as<std::string>("IngestMode").value_or("preprocessed");
+    if(mode == "preprocessed") {
+      mMode = Mode::PREPROCESSED;
+    } else if (mode == "batch") {
+      mMode = Mode::BATCH;
+    } else {
+      mLogger->critical("Unknown ingestion mode: {}, exiting", mode);
+      assert(false);
+    }
+
+    mLogger->info("Using {} mode for ingesting", mode);
+
     mLogger->info("Started client");
   }
 
@@ -232,7 +249,7 @@ private:
       auto size = encodedArrayPtr.size();
       mDataPort.Send(encodedCharArray, size);
       mLogger->trace("Sending data size: {}", size);
-      mWaiting = true;
+      mWaiting = mSync;
 
       auto reader = chunk.asReader();
       for (const auto& rec : reader.getRecordings()) {
@@ -367,6 +384,7 @@ private:
 
         // mLogger->info("Sending request, size: {}", size);
         // mSocket.Send(encodedCharArray, size);
+        mWaiting = mSync;
         mDataBatches.clear();
         return;
       } else {
@@ -432,6 +450,7 @@ private:
         // mStats.back().mSendSize += size;
         // mStats.push_back({.mSendTS = Common::MONOTONIC_CLOCK::Now(), .mSendCount = 10000, .mSendSize = size,
         // .mRuntime = Common::MONOTONIC_CLOCK::Now() - mStartTS}); mWaiting = true;
+        mWaiting = mSync;
 
         mTaggedDataBatches.clear();
         return;
@@ -484,7 +503,9 @@ private:
   EventLoop::EventLoop::Timer mPrintTimer;
 
   Mode mMode{Mode::PREPROCESSED};
-  std::unordered_set<std::uint64_t> tagsSend;
+  std::set<std::uint64_t> tagsSend;
+
+  bool mSync{true};
 
   // capnp related parameters
   std::unique_ptr<CapnpWrapper> mCapWrapper;
