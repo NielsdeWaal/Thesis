@@ -89,11 +89,13 @@ public:
       } else if (overflow < 0) {
         // More than one message in the buffer, recurse to process possible new message
         ProcessMessage(buff);
+        buff.mMessageBuffer.clear();
         OnIncomingData(conn, data + header.totalSize, len - header.totalSize);
       } else if (overflow == 0) {
         // Received exact message
         ProcessMessage(buff);
         SendResponse(conn);
+        buff.mMessageBuffer.clear();
       }
     } else if (buff.mDataRemaining > 0) {
       // std::memcpy(mMessageBuffer.data() + mBufferOffset, data, len);
