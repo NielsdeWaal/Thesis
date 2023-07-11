@@ -56,8 +56,12 @@ def ff_4_clients_600_series():
     plt.savefig("multi_client_4.png")
 
 def ff_4_clients_600_vs_20000():
-    labels = ["600 series", "200000 series"]
+    labels = ["200 series", "600 series", "200000 series"]
     res = []
+
+    files = ["./ff_4_client_1_200_series.csv", "./ff_4_client_2_200_series.csv", "./ff_4_client_3_200_series.csv", "./ff_4_client_4_200_series.csv"]
+    res.append(collect_stats(files))
+
     files = ["./ff_4_client_1_600_series.csv", "./ff_4_client_2_600_series.csv", "./ff_4_client_3_600_series.csv", "./ff_4_client_4_600_series.csv"]
     res.append(collect_stats(files))
 
