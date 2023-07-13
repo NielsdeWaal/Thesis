@@ -56,13 +56,16 @@ def ff_4_clients_600_series():
     plt.savefig("multi_client_4.png")
 
 def ff_4_clients_600_vs_20000():
-    labels = ["200 series", "600 series", "200000 series"]
+    labels = ["200 series", "600 series", "2000 series", "200000 series"]
     res = []
 
     files = ["./ff_4_client_1_200_series.csv", "./ff_4_client_2_200_series.csv", "./ff_4_client_3_200_series.csv", "./ff_4_client_4_200_series.csv"]
     res.append(collect_stats(files))
 
     files = ["./ff_4_client_1_600_series.csv", "./ff_4_client_2_600_series.csv", "./ff_4_client_3_600_series.csv", "./ff_4_client_4_600_series.csv"]
+    res.append(collect_stats(files))
+
+    files = ["./ff_4_client_1_2000_series.csv", "./ff_4_client_2_2000_series.csv", "./ff_4_client_3_2000_series.csv", "./ff_4_client_4_2000_series.csv"]
     res.append(collect_stats(files))
 
     files = ["./ff_4_client_1_20000_series.csv", "./ff_4_client_2_20000_series.csv", "./ff_4_client_3_20000_series.csv", "./ff_4_client_4_20000_series.csv"]
@@ -72,6 +75,7 @@ def ff_4_clients_600_vs_20000():
     ax.set_ylabel("Points per second (million)")
     ax.boxplot(res, labels=labels)
     plt.savefig("cardinality_effect.png")
+    plt.savefig("cardinality_effect.svg", format="pdf")
 
 # ff_2_clients()
 ff_4_clients_600_series()
