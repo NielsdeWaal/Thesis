@@ -17,7 +17,7 @@ struct InfluxKV {
 
 struct IMessage {
   std::string name;
-  // std::vector<InfluxKV> tags;
+  std::vector<InfluxKV> tags;
   std::vector<InfluxKV> measurements;
   std::uint64_t ts;
 };
@@ -172,7 +172,7 @@ namespace grammar {
   // TODO this is only used for files, investigate how this works with UDP buffers
   struct InfluxMessage {
     static constexpr auto rule = [] {
-      auto item = dsl::p<fullname> /*+ dsl::lit_c<','> + dsl::p<tags> */ + dsl::lit_c<' '> + dsl::p<measurements>
+      auto item = dsl::p<name> + dsl::lit_c<','> + dsl::p<tags> + dsl::lit_c<' '> + dsl::p<measurements>
                   + dsl::lit_c<' '> + dsl::p<timestamp> + dsl::eol;
       auto terminator = dsl::terminator(dsl::eof);
       return terminator.list(item);

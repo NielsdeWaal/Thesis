@@ -4,6 +4,7 @@
 #include "EventLoop.h"
 #include "Query.hpp"
 #include "QueryPostProcessingOps.hpp"
+#include "TSC.h"
 #include "Writer.hpp"
 
 #include <variant>
@@ -17,9 +18,11 @@ public:
     mLogger = mEv.RegisterLogger("QueryManager");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     mQueries.resize(10);
+    auto config = mEv.GetConfigTable("DB");
+    mEnableQueryLogging = config->get_as<bool>("LogQueries").value_or(false);
   }
 
-  void SubmitQuery(std::string_view expression) {
+  void SubmitQuery(Common::TcpSocket* conn, std::string_view expression) {
     SeriesQuery::Expr query;
     std::uint64_t startTS{0}; // TODO Switch to optional to make 0 a possible value
     std::uint64_t endTS{0};
@@ -178,7 +181,7 @@ public:
         mQueryCounter);
     // QueryIO io{mEv, mWriter.GetNodeFileFd(), addrs, bufSize};
     // mQueries.emplace_back(, query);
-    mQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize, query, startTS, endTS, group, mQueryCounter);
+    mQueries.emplace_back(mEv, mWriter.GetNodeFileFd(), addrs, bufSize, query, startTS, endTS, group, conn, mQueryCounter);
     ++mQueryCounter;
   }
 
@@ -188,7 +191,8 @@ public:
       if (!op.handled && op.IOBatch) {
         auto& res = op.IOBatch.GetResult();
 
-        mLogger->info("Query finished for {} blocks", res.size());
+        // mLogger->info("Query {} finished for {} blocks", op.id, res.size());
+        // mLogger->info("\t range: {} - {}\n\t nr. points: {}", op.startTS, op.endTS, (bufSize / (sizeof(std::uint64_t) + sizeof(std::int64_t))));
 
         std::vector<EventLoop::DmaBuffer> resultBuffers;
         std::for_each(res.begin(), res.end(), [&resultBuffers](IOOP& resOp) {
@@ -231,6 +235,11 @@ public:
           }
         }
 
+        ::capnp::MallocMessageBuilder reply;
+        proto::QueryResult::Builder result = reply.initRoot<proto::QueryResult>();
+        std::vector<std::pair<std::uint64_t, std::int64_t>> results;
+        results.reserve(5000);
+
         using namespace SeriesQuery;
         for (EventLoop::DmaBuffer& buf : resultBuffers) {
           DataPoint* points = ( DataPoint* ) buf.GetPtr();
@@ -258,9 +267,11 @@ public:
                     },
                     postGroups.at(binCounter));
               } else {
-                mLogger->info("res: {} -> {}", points[i].timestamp, points[i].value);
+                mLogger->debug("res: {} -> {}", points[i].timestamp, points[i].value);
+                results.emplace_back(points[i].timestamp, points[i].value);
               }
             }
+          // mLogger->info("test: {} -> {}", points[i].timestamp, points[i].value);
           }
         }
 
@@ -279,12 +290,37 @@ public:
                     },
                 },
                 val);
-            mLogger->info("Bucket val: {}", opRes);
+            mLogger->debug("Bucket val: {}", opRes);
+            results.emplace_back(0, opRes);
           }
         }
 
-        mLogger->info("Query done");
+        ::capnp::List<proto::QueryResult::Measurement>::Builder resList = result.initResults(results.size());
+        for (std::pair<
+                 std::vector<std::pair<std::uint64_t, std::int64_t>>::iterator,
+                 ::capnp::List<proto::QueryResult::Measurement>::Builder::Iterator> i(results.begin(), resList.begin());
+             i.first != results.end();
+             ++i.first, ++i.second) {
+          i.second->setTimestamp(i.first->first);
+          i.second->setValue(i.first->second);
+        }
+
+        auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - op.submitTS) / 1000000000.f;
+
+        mLogger->info("Query done, took: {}s", duration);
         op.handled = true;
+
+        if (mEnableQueryLogging) {
+          std::ofstream output("query_latencies.csv", std::ios_base::app);
+          output << fmt::format("{},{},{}\n", duration, res.size(), (bufSize / (sizeof(std::uint64_t) + sizeof(std::int64_t))));
+        }
+
+        auto encodedArray = capnp::messageToFlatArray(reply);
+        auto encodedArrayPtr = encodedArray.asChars();
+        auto encodedCharArray = encodedArrayPtr.begin();
+        auto size = encodedArrayPtr.size();
+
+        op.sourceConn->Send(encodedCharArray, size);
         // mQueryManager.ParseQuery("(and (< #TS 1451621760000000000) (> #V 95))");
 
         // std::erase_if(mQueries, [&](const Query& q){return q.id == op.id;});
@@ -333,12 +369,14 @@ private:
         std::uint64_t start,
         std::uint64_t end,
         GroupByOp op,
+        Common::TcpSocket* conn,
         std::uint64_t queryId)
     : IOBatch(ev, fd, addrs, blockSize)
     , QueryExpression(expression)
     , startTS(start)
     , endTS(end)
     , postProcessing(op)
+    , sourceConn(conn)
     , id(queryId) {}
     Query(): IOBatch(), QueryExpression(), id(0) {}
     QueryIO IOBatch;
@@ -348,10 +386,13 @@ private:
     std::uint64_t endTS{0};
 
     GroupByOp postProcessing;
+    Common::TcpSocket* sourceConn{nullptr};
 
     // Used together with query counter to allow queries to be deleted from queue
     std::uint64_t id;
     bool handled{false};
+
+    Common::MONOTONIC_TIME submitTS{Common::MONOTONIC_CLOCK::Now()};
   };
 
   struct Token {
@@ -448,6 +489,9 @@ private:
   MetaData& mMetadata;
 
   std::uint64_t mQueryCounter{0};
+
+  bool mEnableQueryLogging{true};
+  
 
   std::shared_ptr<spdlog::logger> mLogger;
 };

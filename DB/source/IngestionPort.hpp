@@ -3,6 +3,7 @@
 
 #include "IngestionProtocol/proto.capnp.h"
 #include "StreamSocket.h"
+#include "TCPSocket.h"
 #include "TSC.h"
 #include "UDPSocket.h"
 #include "WebSocketServer.hpp"
@@ -112,12 +113,18 @@ public:
 
       if (buff.mDataRemaining == 0) {
         mLogger->trace("Received full message, parsing...");
+        // FIXME when there is data remaining, call OnIncomingData again
+        // use dataLen to determine if there is more in this message than just the end of the currently ingesting message
 
         ProcessMessage(buff);
         SendResponse(conn);
 
         buff.mMessageBuffer.clear();
         buff.mReceiving = false;
+
+        if(overflow) {
+          OnIncomingData(conn, data + dataLen, len - dataLen);
+        }
       }
     }
   }
@@ -127,39 +134,41 @@ private:
   struct ConnBuffer;
 
   void ProcessMessage(ConnBuffer& conn) {
-    const auto pdata =
-        kj::arrayPtr(( const capnp::word* ) conn.mMessageBuffer.data(), conn.mMessageBuffer.size() / sizeof(capnp::word));
-    capnp::FlatArrayMessageReader msg{pdata};
-    proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
+    if(!mNoop) {
+      const auto pdata =
+          kj::arrayPtr(( const capnp::word* ) conn.mMessageBuffer.data(), conn.mMessageBuffer.size() / sizeof(capnp::word));
+      capnp::FlatArrayMessageReader msg{pdata};
+      proto::InsertionBatch::Reader insertMsg = msg.getRoot<proto::InsertionBatch>();
 
-    std::vector<std::uint64_t> tags;
-    tags.reserve(50);
-    std::uint64_t ingestCount{0};
-    Common::MONOTONIC_TIME start{Common::MONOTONIC_CLOCK::Now()};
-    // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
-    // auto msgs = insertMsg.getRecordings();
-    for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
-      // mLogger->info("Received insert for tag: {}", batch.getTag());
-      const std::uint64_t tag{batch.getTag()};
-      tags.emplace_back(tag);
-      for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
-        mWriter.Insert(tag, meas.getTimestamp(), meas.getValue());
-        ++ingestCount;
+      std::vector<std::uint64_t> tags;
+      tags.reserve(50);
+      std::uint64_t ingestCount{0};
+      Common::MONOTONIC_TIME start{Common::MONOTONIC_CLOCK::Now()};
+      // mLogger->info("Received insert msg: {}", insertMsg.toString().flatten());
+      // auto msgs = insertMsg.getRecordings();
+      for (const proto::InsertionBatch::Message::Reader batch : insertMsg.getRecordings()) {
+        // mLogger->info("Received insert for tag: {}", batch.getTag());
+        const std::uint64_t tag{batch.getTag()};
+        tags.emplace_back(tag);
+        for (const proto::InsertionBatch::Message::Measurement::Reader meas : batch.getMeasurements()) {
+          mWriter.Insert(tag, meas.getTimestamp(), meas.getValue());
+          ++ingestCount;
+        }
       }
-    }
 
-    auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
-    double timeTakenS = duration / 1000000000.;
-    double rateS = ingestCount / timeTakenS;
-    double dataRate = (rateS * 16) / 1000000;
-    mLogger->trace("Processed tags: {}", fmt::join(tags, ", "));
-    mLogger->debug(
-        "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
-        ingestCount,
-        conn.mMessageBuffer.size(),
-        timeTakenS,
-        dataRate,
-        rateS);
+      auto duration = Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - start);
+      double timeTakenS = duration / 1000000000.;
+      double rateS = ingestCount / timeTakenS;
+      double dataRate = (rateS * 16) / 1000000;
+      mLogger->trace("Processed tags: {}", fmt::join(tags, ", "));
+      mLogger->debug(
+          "Ingested {} ({} bytes) points in {}s, rate: {}MB/s / {} points/sec",
+          ingestCount,
+          conn.mMessageBuffer.size(),
+          timeTakenS,
+          dataRate,
+          rateS);
+    }
   }
 
   void SendResponse(Common::StreamSocket* conn) {

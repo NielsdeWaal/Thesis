@@ -5,3 +5,4 @@ scripts/pyvenv.cfg
 scripts/share/*
 *.png
 *.pdf
+*.csv

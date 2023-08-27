@@ -6,9 +6,10 @@ parser.add_argument('scale')
 args = parser.parse_args()
 
 filename_base = "/home/deploy/data/timeseries_data/preprocessed/{client_nr}_clients/large-{scale}-client-{client}.capfile"
+# filename_base = "/tmp/small-{scale}-client-{client}.capfile"
 
 for client in range(1, int(args.nr_client) + 1):
-    filename = filename_base.format(client_nr= args.nr_client, scale= args.scale, client= client - 1)
+    filename = filename_base.format(client_nr = args.nr_client, scale = args.scale, client = (client - 1))
     with open(f'FrogFishClient-{client}.toml', 'w') as f:
         f.write(f"""[EventLoop]
 RunHot = true

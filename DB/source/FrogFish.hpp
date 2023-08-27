@@ -24,8 +24,9 @@ public:
   , mMetaData(mEv)
   , mWriter(mEv, mMetaData, maxOutstandingIO)
   , mIngestPort(mEv, mWriter)
-  , mManagement(mEv, mMetaData)
-  , mQueryManager(mEv, mWriter, mMetaData) {
+  , mQueryManager(mEv, mWriter, mMetaData) 
+  , mManagement(mEv, mMetaData, mQueryManager) 
+  {
     mLogger = mEv.RegisterLogger("FrogFishDB");
     mEv.RegisterCallbackHandler(( EventLoop::IEventLoopCallbackHandler* ) this, EventLoop::EventLoop::LatencyType::Low);
     IngestionTask();
@@ -230,8 +231,8 @@ private:
   MetaData mMetaData;
   Writer<bufSize> mWriter;
   IngestionPort<bufSize> mIngestPort;
-  ManagementPort mManagement;
   QueryManager<bufSize> mQueryManager;
+  ManagementPort<bufSize> mManagement;
   // int mIngestionMethod{-1};
 
   // rigtorp::SPSCQueue<InfluxMessage> mQueue{32};

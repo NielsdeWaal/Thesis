@@ -27,6 +27,8 @@ CAPNP_DECLARE_SCHEMA(92cf7d4e3ffe1c5c);
 CAPNP_DECLARE_SCHEMA(94967955f84f2a9c);
 CAPNP_DECLARE_SCHEMA(9abe3317c5a46e4e);
 CAPNP_DECLARE_SCHEMA(b4d05bbf58a7601c);
+CAPNP_DECLARE_SCHEMA(85ff94adeb6baae9);
+CAPNP_DECLARE_SCHEMA(bf14a5c356f04477);
 CAPNP_DECLARE_SCHEMA(8e4dc2547ec6a463);
 CAPNP_DECLARE_SCHEMA(c228b47c5031d069);
 
@@ -198,6 +200,37 @@ struct QueryMessage {
 
   struct _capnpPrivate {
     CAPNP_DECLARE_STRUCT_HEADER(b4d05bbf58a7601c, 0, 1)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct QueryResult {
+  QueryResult() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+  struct Measurement;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(85ff94adeb6baae9, 0, 1)
+    #if !CAPNP_LITE
+    static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
+    #endif  // !CAPNP_LITE
+  };
+};
+
+struct QueryResult::Measurement {
+  Measurement() = delete;
+
+  class Reader;
+  class Builder;
+  class Pipeline;
+
+  struct _capnpPrivate {
+    CAPNP_DECLARE_STRUCT_HEADER(bf14a5c356f04477, 2, 0)
     #if !CAPNP_LITE
     static constexpr ::capnp::_::RawBrandedSchema const* brand() { return &schema->defaultBrand; }
     #endif  // !CAPNP_LITE
@@ -1182,6 +1215,168 @@ private:
 };
 #endif  // !CAPNP_LITE
 
+class QueryResult::Reader {
+public:
+  typedef QueryResult Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline bool hasResults() const;
+  inline  ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>::Reader getResults() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class QueryResult::Builder {
+public:
+  typedef QueryResult Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline bool hasResults();
+  inline  ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>::Builder getResults();
+  inline void setResults( ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>::Reader value);
+  inline  ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>::Builder initResults(unsigned int size);
+  inline void adoptResults(::capnp::Orphan< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>>&& value);
+  inline ::capnp::Orphan< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>> disownResults();
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class QueryResult::Pipeline {
+public:
+  typedef QueryResult Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
+class QueryResult::Measurement::Reader {
+public:
+  typedef Measurement Reads;
+
+  Reader() = default;
+  inline explicit Reader(::capnp::_::StructReader base): _reader(base) {}
+
+  inline ::capnp::MessageSize totalSize() const {
+    return _reader.totalSize().asPublic();
+  }
+
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const {
+    return ::capnp::_::structString(_reader, *_capnpPrivate::brand());
+  }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint64_t getTimestamp() const;
+
+  inline  ::int64_t getValue() const;
+
+private:
+  ::capnp::_::StructReader _reader;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::List;
+  friend class ::capnp::MessageBuilder;
+  friend class ::capnp::Orphanage;
+};
+
+class QueryResult::Measurement::Builder {
+public:
+  typedef Measurement Builds;
+
+  Builder() = delete;  // Deleted to discourage incorrect usage.
+                       // You can explicitly initialize to nullptr instead.
+  inline Builder(decltype(nullptr)) {}
+  inline explicit Builder(::capnp::_::StructBuilder base): _builder(base) {}
+  inline operator Reader() const { return Reader(_builder.asReader()); }
+  inline Reader asReader() const { return *this; }
+
+  inline ::capnp::MessageSize totalSize() const { return asReader().totalSize(); }
+#if !CAPNP_LITE
+  inline ::kj::StringTree toString() const { return asReader().toString(); }
+#endif  // !CAPNP_LITE
+
+  inline  ::uint64_t getTimestamp();
+  inline void setTimestamp( ::uint64_t value);
+
+  inline  ::int64_t getValue();
+  inline void setValue( ::int64_t value);
+
+private:
+  ::capnp::_::StructBuilder _builder;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+  friend class ::capnp::Orphanage;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::_::PointerHelpers;
+};
+
+#if !CAPNP_LITE
+class QueryResult::Measurement::Pipeline {
+public:
+  typedef Measurement Pipelines;
+
+  inline Pipeline(decltype(nullptr)): _typeless(nullptr) {}
+  inline explicit Pipeline(::capnp::AnyPointer::Pipeline&& typeless)
+      : _typeless(kj::mv(typeless)) {}
+
+private:
+  ::capnp::AnyPointer::Pipeline _typeless;
+  friend class ::capnp::PipelineHook;
+  template <typename, ::capnp::Kind>
+  friend struct ::capnp::ToDynamic_;
+};
+#endif  // !CAPNP_LITE
+
 class ManagementMessage::Reader {
 public:
   typedef ManagementMessage Reads;
@@ -1876,6 +2071,68 @@ inline void QueryMessage::Builder::adoptQuery(
 inline ::capnp::Orphan< ::capnp::Text> QueryMessage::Builder::disownQuery() {
   return ::capnp::_::PointerHelpers< ::capnp::Text>::disown(_builder.getPointerField(
       ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline bool QueryResult::Reader::hasResults() const {
+  return !_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline bool QueryResult::Builder::hasResults() {
+  return !_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS).isNull();
+}
+inline  ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>::Reader QueryResult::Reader::getResults() const {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>>::get(_reader.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline  ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>::Builder QueryResult::Builder::getResults() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>>::get(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+inline void QueryResult::Builder::setResults( ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>::Reader value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>>::set(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), value);
+}
+inline  ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>::Builder QueryResult::Builder::initResults(unsigned int size) {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>>::init(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), size);
+}
+inline void QueryResult::Builder::adoptResults(
+    ::capnp::Orphan< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>>&& value) {
+  ::capnp::_::PointerHelpers< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>>::adopt(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS), kj::mv(value));
+}
+inline ::capnp::Orphan< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>> QueryResult::Builder::disownResults() {
+  return ::capnp::_::PointerHelpers< ::capnp::List< ::proto::QueryResult::Measurement,  ::capnp::Kind::STRUCT>>::disown(_builder.getPointerField(
+      ::capnp::bounded<0>() * ::capnp::POINTERS));
+}
+
+inline  ::uint64_t QueryResult::Measurement::Reader::getTimestamp() const {
+  return _reader.getDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+
+inline  ::uint64_t QueryResult::Measurement::Builder::getTimestamp() {
+  return _builder.getDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS);
+}
+inline void QueryResult::Measurement::Builder::setTimestamp( ::uint64_t value) {
+  _builder.setDataField< ::uint64_t>(
+      ::capnp::bounded<0>() * ::capnp::ELEMENTS, value);
+}
+
+inline  ::int64_t QueryResult::Measurement::Reader::getValue() const {
+  return _reader.getDataField< ::int64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+
+inline  ::int64_t QueryResult::Measurement::Builder::getValue() {
+  return _builder.getDataField< ::int64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS);
+}
+inline void QueryResult::Measurement::Builder::setValue( ::int64_t value) {
+  _builder.setDataField< ::int64_t>(
+      ::capnp::bounded<1>() * ::capnp::ELEMENTS, value);
 }
 
 inline typename ManagementMessage::Type::Reader ManagementMessage::Reader::getType() const {

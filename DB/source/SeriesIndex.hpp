@@ -87,7 +87,8 @@ public:
 
       mEv.QueueStandardRequest(std::move(data));
 
-      mInFlightIO.push_back(IOOP{.pos = mLogFileOffset, .len = 512, .buf = std::move(buf)});
+      // mInFlightIO.push_back(IOOP{.pos = mLogFileOffset, .len = 512, .buf = std::move(buf)});
+      mInFlightIO.emplace_back(mLogFileOffset, 512, std::move(buf));
     }
 
     std::memcpy(seriesBuf.GetPtr(), seriesName.data(), seriesName.length());
@@ -104,7 +105,8 @@ public:
 
       mEv.QueueStandardRequest(std::move(data));
 
-      mInFlightIO.push_back(IOOP{.pos = mStringFileOffset, .len = 512, .buf = std::move(seriesBuf)});
+      // mInFlightIO.push_back(IOOP{.pos = mStringFileOffset, .len = 512, .buf = std::move(seriesBuf)});
+      mInFlightIO.emplace_back(mStringFileOffset, 512, std::move(seriesBuf));
     }
 
     mIndex[seriesName] = id;

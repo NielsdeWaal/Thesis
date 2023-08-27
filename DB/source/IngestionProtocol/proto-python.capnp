@@ -49,3 +49,23 @@ struct InsertionBatch {
 struct InsertionResponse {
 	
 }
+
+struct QueryMessage {
+	query @0 :Text;
+}
+
+struct QueryResult {
+	struct Measurement {
+		timestamp @0 :UInt64;
+		value @1 :Int64;
+	}
+	
+	results @0 :List(Measurement);
+}
+
+struct ManagementMessage {
+	type :union {
+		idRequest @0 :IdRequest;
+		query @1 :QueryMessage;
+	}
+}

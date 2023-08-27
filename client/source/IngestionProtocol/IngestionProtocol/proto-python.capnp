@@ -1,8 +1,5 @@
 @0xbb15653a0870b80a;
 
-using Cxx = import "/capnp/c++.capnp";
-$Cxx.namespace("proto");
-
 struct Tag {
 	name @0 :Text;
 	value @1 :Text;
@@ -55,15 +52,6 @@ struct InsertionResponse {
 
 struct QueryMessage {
 	query @0 :Text;
-}
-
-struct QueryResult {
-	struct Measurement {
-		timestamp @0 :UInt64;
-		value @1 :Int64;
-	}
-	
-	results @0 :List(Measurement);
 }
 
 struct ManagementMessage {

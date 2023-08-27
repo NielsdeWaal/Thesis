@@ -94,6 +94,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
     for test in tagsets:
         items = test.split(',')
+        msg = BATCH_CAPNP.ManagementMessage.new_message()
         req = BATCH_CAPNP.IdRequest.new_message()
         req.identifier = 1337
         req.metric = items[-1]
@@ -105,7 +106,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             target.name = k
             target.value = v
 
-        s.sendall(req.to_bytes())
+        msg.type.idRequest = req
+        s.sendall(msg.to_bytes())
         with BATCH_CAPNP.IdResponse.from_bytes(s.recv(1024)) as resp:
             mapping[test] = resp.setId
 

@@ -126,7 +126,7 @@ FetchContent_Declare(
   CommonLibs
   
   GIT_REPOSITORY git@github.com:NielsdeWaal/CommonLibs.git
-  GIT_TAG origin/development
+  GIT_TAG fbac307da35495b947577943c1d38acdaf6a702f
 )
 FetchContent_Declare(
   TimeTree

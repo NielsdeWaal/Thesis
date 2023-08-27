@@ -19,8 +19,16 @@
 // size of such a read.
 
 struct IOOP {
-  std::uint64_t pos;
-  std::size_t len;
+  IOOP() = default;
+  IOOP(int pos, int len, EventLoop::DmaBuffer buf): pos(pos), len(len), buf(std::move(buf)) {}
+
+  IOOP(const IOOP&) = default;
+  IOOP(IOOP&&) = default;
+  IOOP& operator=(const IOOP&) = default;
+  IOOP& operator=(IOOP&&) = default;
+
+  std::uint64_t pos{0};
+  std::size_t len{0};
   EventLoop::DmaBuffer buf;
 };
 
@@ -39,7 +47,8 @@ public:
 
       ev.QueueStandardRequest(std::move(data));
 
-      mInFlightIO.push_back(IOOP{.pos = op.pos, .len = op.len, .buf = std::move(op.buf)});
+      // mInFlightIO.push_back(IOOP{.pos = op.pos, .len = op.len, .buf = std::move(op.buf)});
+      mInFlightIO.emplace_back(op.pos, op.len, std::move(op.buf));
     }
     mIOCount = ops.size();
   }
@@ -55,7 +64,8 @@ public:
 
       ev.QueueStandardRequest(std::move(data));
 
-      mInFlightIO.push_back(IOOP{.pos = addr, .len = blockSize, .buf = std::move(buf)});
+      // mInFlightIO.push_back(IOOP{.pos = addr, .len = blockSize, .buf = std::move(buf)});
+      mInFlightIO.emplace_back(addr, blockSize, std::move(buf));
     }
     mIOCount = addrs.size();
   }

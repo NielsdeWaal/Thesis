@@ -102,7 +102,7 @@ public:
     }
   }
 
-  TimeTree<64>& GetTreeForIndex(const std::uint64_t index) {
+  TimeTree<202>& GetTreeForIndex(const std::uint64_t index) {
     return mTrees[index]->tree;
   }
 
@@ -175,7 +175,7 @@ private:
     : memtable(ev)
     , flushBuf(ev.AllocateDmaBuffer(bufSize))
     , logBuf(ev.AllocateDmaBuffer(512)) {}
-    TimeTree<64> tree;
+    TimeTree<202> tree;
     std::size_t ctr;
     // std::array<DataPoint, memtableSize> memtable{};
     Memtable<NULLCompressor, bufSize> memtable;

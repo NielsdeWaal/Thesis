@@ -9,6 +9,7 @@
 
 #include <capnp/serialize.h>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <numeric>
 #include <string>
@@ -194,6 +195,7 @@ public:
     mLogger->debug("Go completion from DB");
     mWaiting = false;
     // mStats.back().mConfirmTS = Common::MONOTONIC_CLOCK::Now();
+    mLatencies.emplace_back(Common::MONOTONIC_CLOCK::ToNanos(Common::MONOTONIC_CLOCK::Now() - mSendTS));
   }
 
 private:
@@ -235,6 +237,13 @@ private:
         }
         output.flush();
 
+        std::ofstream lFile("latencies.csv");
+        lFile << "latency\n";
+        for (const std::uint64_t latency : mLatencies) {
+          lFile << fmt::format("{}\n", latency);
+        }
+        lFile.flush();
+
         exit(0);
         return;
       }
@@ -248,6 +257,7 @@ private:
       auto encodedCharArray = encodedArrayPtr.begin();
       auto size = encodedArrayPtr.size();
       mDataPort.Send(encodedCharArray, size);
+      mSendTS = Common::MONOTONIC_CLOCK::Now();
       mLogger->trace("Sending data size: {}", size);
       mWaiting = mSync;
 
@@ -497,8 +507,10 @@ private:
 
   Common::MONOTONIC_TIME mStartTS{Common::MONOTONIC_CLOCK::Now()};
   Common::MONOTONIC_TIME mLastTS{Common::MONOTONIC_CLOCK::Now()};
+  Common::MONOTONIC_TIME mSendTS{Common::MONOTONIC_CLOCK::Now()};
   std::vector<std::tuple<std::uint64_t, std::uint64_t, double>> mStats;
   std::vector<Common::MONOTONIC_TIME> mEncodingDelay;
+  std::vector<std::uint64_t> mLatencies;
 
   EventLoop::EventLoop::Timer mPrintTimer;
 

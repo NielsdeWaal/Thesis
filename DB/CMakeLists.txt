@@ -8,7 +8,7 @@ add_subdirectory(external)
 
 # Testing
 enable_testing()
-# add_subdirectory(test)
+add_subdirectory(test)
 
 # Source code
 add_subdirectory(source)

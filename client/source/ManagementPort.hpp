@@ -99,9 +99,11 @@ public:
       auto rq = mQueue.back();
       ::capnp::MallocMessageBuilder request;
 
-      proto::IdRequest::Builder req = request.initRoot<proto::IdRequest>();
-      req.setIdentifier(rq.requestToken);
-      req.setMetric(rq.metric);
+      // proto::IdRequest::Builder req = request.initRoot<proto::IdRequest>();
+      // req.setIdentifier(rq.requestToken);
+      // req.setMetric(rq.metric);
+      proto::ManagementMessage::Builder msg = request.initRoot<proto::ManagementMessage>();
+      proto::IdRequest::Builder req = msg.getType().initIdRequest();
 
       ::capnp::List<proto::Tag>::Builder tagBuilder = req.initTagSet(rq.tags.size());
       for (std::pair<
