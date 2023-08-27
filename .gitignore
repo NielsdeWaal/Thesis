@@ -1,0 +1,7 @@
+DB/build/*
+client/build/*
+scripts/lib/*
+scripts/pyvenv.cfg
+scripts/share/*
+*.png
+*.pdf
