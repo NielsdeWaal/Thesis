@@ -1,0 +1,28 @@
+Checks: 'clang-analyzer-*,-clang-analyzer-optin.*,-clang-analyzer-osx.*,cppcoreguidelines-*,-cppcoreguidelines-pro-type-vararg,readability-*,bugprone-*,-bugprone-exception-escape,-bugprone-infinite-loop,-bugprone-no-escape,modernize-*,-modernize-use-trailing-return-type,performance-*,-readability-redundant-access-specifiers,-readability-uppercase-literal-suffix, -misc-non-private-member-variables-in-classes'
+CheckOptions:
+  - key: modernize-use-transparent-functors.SafeMode
+    value: 'true'
+  - key: bugprone-argument-comment.CommentBoolLiterals
+    value: 'false'
+  - key: readability-identifier-naming.VariableCase
+    value: 'camelBack'
+  - key: readability-identifier-naming.FunctionCase
+    value: 'CamelCase'
+  - key: readability-identifier-naming.ClassCase
+    value: 'CamelCase'
+  - key: readability-identifier-naming.StructSuffix
+    value: '_t'
+  - key: readability-identifier-naming.AbstractClassPrefix
+    value: 'I'
+  - key: readability-identifier-naming.EnumSuffix
+    value: '_e'
+  - key: readability-identifier-naming.ScopedEnumConstantCase
+    value: 'UPPER_CASE'
+  - key: readability-identifier-naming.EnumConstantCase
+    value: 'UPPER_CASE'
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: 'UPPER_CASE'
+  - key: readability-function-cognitive-complexity.IgnoreMacros
+    value: 'true'
+  - key: readability-identifier-naming.ClassConstantPrefix
+    value: ''
